@@ -1,0 +1,18 @@
+{
+  "id": "001-basic",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "workspace",
+  "full_send": true,
+  "step_limit": 10,
+  "graders": {
+    "outcome_workspace_snapshot": {
+      "enabled": true,
+      "required": true
+    },
+    "transcript_command_trace": {
+      "enabled": false,
+      "required": false
+    }
+  }
+}

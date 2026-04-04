@@ -1,0 +1,43 @@
+#!/bin/sh
+set -eu
+
+tmp1="$(mktemp -d)"
+tmp2="$(mktemp -d)"
+cleanup() {
+    rm -rf "$tmp1" "$tmp2"
+}
+trap cleanup EXIT
+
+test -x /usr/bin/clankerval
+test -L /usr/bin/clnkeval
+
+clankerval --version
+clnkeval --version
+
+stdout1="$tmp1/stdout"
+stderr1="$tmp1/stderr"
+clankerval run --suite dummy \
+    --evals-dir /usr/share/doc/clankerval/examples/evaluations \
+    --binary /usr/libexec/clankerval/examples/evalfixture-agent \
+    --output-dir "$tmp1/out" \
+    >"$stdout1" 2>"$stderr1"
+grep -Fxq 'suite=dummy tasks=1 trials=1 passed=1 failed=0' "$stdout1"
+grep -Fq 'clankerval: binary ready' "$stderr1"
+test -f "$tmp1/out/reports/junit.xml"
+test -f "$tmp1/out/reports/open-test-report.xml"
+test -f "$tmp1/out/trials/trial-dummy-000-00-001-basic/outcome/workspace/note.txt"
+
+stdout2="$tmp2/stdout"
+stderr2="$tmp2/stderr"
+clnkeval run --suite dummy \
+    --evals-dir /usr/share/doc/clankerval/examples/evaluations \
+    --binary /usr/libexec/clankerval/examples/evalfixture-agent \
+    --output-dir "$tmp2/out" \
+    >"$stdout2" 2>"$stderr2"
+grep -Fxq 'suite=dummy tasks=1 trials=1 passed=1 failed=0' "$stdout2"
+grep -Fq 'clnkeval: binary ready' "$stderr2"
+test -f "$tmp2/out/reports/junit.xml"
+test -f "$tmp2/out/reports/open-test-report.xml"
+test -f "$tmp2/out/trials/trial-dummy-000-00-001-basic/outcome/workspace/note.txt"
+
+echo "OK: smoke tests passed"

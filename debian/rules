@@ -1,0 +1,29 @@
+#!/usr/bin/make -f
+
+include /usr/share/dpkg/pkg-info.mk
+
+export CGO_ENABLED=0
+
+VERSION := $(DEB_VERSION_UPSTREAM)
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	go build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o clankerval ./cmd/clankerval
+	go build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o evalfixture-agent ./internal/testfixture/evalfixture-agent
+
+override_dh_auto_test:
+	go test ./... -v
+	make evaluations
+
+override_dh_auto_install:
+	:
+
+override_dh_auto_clean:
+	rm -f clankerval evalfixture-agent clnkeval
+	rm -rf .tmp
+
+override_dh_dwz:
+	# dwz fails on Go binaries
+
