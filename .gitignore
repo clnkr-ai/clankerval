@@ -1,0 +1,9 @@
+.tmp/
+/clankerval
+/clnkeval
+/evalfixture-agent
+*.deb
+*.build
+*.buildinfo
+*.changes
+*.tar.*
