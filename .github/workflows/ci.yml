@@ -73,7 +73,9 @@ jobs:
         run: dpkg-buildpackage -us -uc -d
 
       - name: Run lintian
-        run: lintian --fail-on error ../*.changes
+        run: |
+          lintian --suppress-tags bad-distribution-in-changes-file \
+            --fail-on error ../*.changes
 
       - name: Run autopkgtest
         run: autopkgtest ../*_"$(dpkg-architecture -qDEB_HOST_ARCH)".changes -- null
