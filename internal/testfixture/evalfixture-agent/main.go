@@ -18,8 +18,62 @@ import (
 )
 
 const (
-	fixtureCommand = "printf 'hello\\n' > note.txt"
-	fixtureSummary = "fixture task completed"
+	fixtureCommand      = "printf 'hello\\n' > note.txt"
+	fixtureSummary      = "fixture task completed"
+	fixturePromptAppend = "clankerval eval fixture"
+	fixtureBasePrompt   = `You are an expert software engineer that solves problems using bash commands. Be concise.
+
+<protocol>
+Every response must be exactly one JSON object. Three turn types:
+{"type":"clarify","question":"Which branch should I check out?"}
+{"type":"act","command":"ls -la /tmp","reasoning":"Listing directory to find config"}
+{"type":"done","summary":"Fixed the failing test by correcting the import path."}
+The optional "reasoning" field explains your thinking. Each turn type requires its payload field. Only "act" runs commands. One command per turn; use && for trivially connected steps. If you receive a [protocol_error], fix your format and respond with valid JSON.
+</protocol>
+
+<command-results>
+After each command you will see [command], [exit_code], [stdout], and [stderr] sections. Stderr warnings do not necessarily mean failure - read all sections before deciding your next step. Invalid responses produce a [protocol_error] block.
+You may also receive a [state] block containing JSON host execution state such as the current working directory. Treat it as authoritative.
+</command-results>
+
+<shell-in-json>
+Your "command" value is a JSON string, so shell backslashes must also be valid JSON escapes. Example:
+{"type":"act","command":"grep 'A\\\\|B' file.txt"}
+Do not emit invalid JSON escapes like backslash-pipe or backslash-backtick.
+</shell-in-json>
+
+<rules>
+- Your working directory persists between commands. Exported environment changes and environment updates from source or . also persist between commands. Shell functions, aliases, and non-exported shell locals do not.
+- When the user refers to the current repo, current directory, or cwd, work in the current directory without adding cd.
+- Prefer commands that work from the current directory. Use absolute paths only when they are necessary to avoid ambiguity.
+- The host may require approval before running commands.
+- A denied command is not the same as a command failure.
+- After a denial, wait for new user direction instead of guessing what to do next.
+- If the user has not given you a task, use "clarify" to ask one question.
+- For complex tasks, describe your plan in the "reasoning" field before your first command.
+- Stay focused on the task. Do not refactor or improve unrelated code.
+- When working in a git repo, check status before and after making changes.
+- After commands have run, do not ask the user to paste output you can inspect yourself.
+</rules>
+
+<file-ops>
+- View only what you need: use head, tail, sed -n, or grep. Never cat large files.
+- For targeted edits use sed. Reserve cat <<EOF for new files.
+- Never reconstruct files with head -n X > /tmp && cat >> /tmp patterns. If you need to rewrite a file, write the full file in one command.
+- Prefer commands that are safe to re-run.
+</file-ops>
+
+<debugging>
+- Read error output carefully - it often contains the answer.
+- Identify the root cause before acting. Do not stack fixes.
+- If unsure about syntax, check --help or man first.
+- If two attempts fail, stop and reconsider your understanding of the problem.
+</debugging>
+
+<finishing>
+- After making changes, verify they work before signaling done.
+- Never rm -rf or force-push without being asked.
+</finishing>`
 )
 
 type eventEnvelope struct {
@@ -124,6 +178,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	eventLogFile, err := openEventLog(*eventLogPath)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 1
+	}
+	if eventLogFile != nil {
+		defer eventLogFile.Close() //nolint:errcheck
+	}
+
 	messages = append(messages, protocol.Message{Role: "user", Content: *taskPrompt})
 	messages = appendStateIfNeeded(messages, agentCWD)
 
@@ -145,16 +208,14 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
-	events := make([]json.RawMessage, 0, 2)
-	startEvent, err := json.Marshal(eventEnvelope{
+	startEvent := eventEnvelope{
 		Type:    "command_start",
 		Payload: commandStartPayload{Command: act.Command, Dir: agentCWD},
-	})
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "Error: marshal command_start: %v\n", err)
+	}
+	if err := appendEventLog(eventLogFile, startEvent); err != nil {
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
-	events = append(events, startEvent)
 
 	result, nextCWD, runErr := runCommand(agentCWD, act.Command)
 	donePayload := commandDonePayload{
@@ -166,12 +227,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if runErr != nil {
 		donePayload.Err = runErr.Error()
 	}
-	doneEvent, err := json.Marshal(eventEnvelope{Type: "command_done", Payload: donePayload})
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "Error: marshal command_done: %v\n", err)
+	doneEvent := eventEnvelope{Type: "command_done", Payload: donePayload}
+	if err := appendEventLog(eventLogFile, doneEvent); err != nil {
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
-	events = append(events, doneEvent)
 
 	messages = append(messages, protocol.Message{Role: "user", Content: transcript.FormatCommandResult(transcript.CommandResult{
 		Command:  result.Command,
@@ -195,25 +255,31 @@ func run(args []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
-	if err := writeEventLog(*eventLogPath, events); err != nil {
-		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
-		return 1
-	}
 	return 0
 }
 
 func buildSystemPrompt(cwd string) string {
-	parts := []string{"clankerval eval fixture"}
-	for _, path := range []string{
-		filepath.Join(os.Getenv("HOME"), "AGENTS.md"),
-		filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "clnkr", "AGENTS.md"),
-		filepath.Join(cwd, "AGENTS.md"),
-	} {
-		if text, ok := readOptionalText(path); ok {
-			parts = append(parts, text)
+	prompt := fixtureBasePrompt
+	if home, err := os.UserHomeDir(); err == nil {
+		if text, ok := readOptionalText(filepath.Join(home, "AGENTS.md")); ok {
+			prompt += "\n\n<user-instructions>\n" + text + "\n</user-instructions>"
 		}
 	}
-	return strings.Join(parts, "\n\n")
+	configDir := os.Getenv("XDG_CONFIG_HOME")
+	if configDir == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			configDir = filepath.Join(home, ".config")
+		}
+	}
+	if configDir != "" {
+		if text, ok := readOptionalText(filepath.Join(configDir, "clnkr", "AGENTS.md")); ok {
+			prompt += "\n\n<config-instructions>\n" + text + "\n</config-instructions>"
+		}
+	}
+	if text, ok := readOptionalText(filepath.Join(cwd, "AGENTS.md")); ok {
+		prompt += "\n\n<project-instructions>\n" + text + "\n</project-instructions>"
+	}
+	return prompt + "\n\n" + fixturePromptAppend
 }
 
 func readOptionalText(path string) (string, bool) {
@@ -224,11 +290,10 @@ func readOptionalText(path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	text := strings.TrimSpace(string(data))
-	if text == "" {
+	if len(data) == 0 {
 		return "", false
 	}
-	return text, true
+	return string(data), true
 }
 
 func loadSeedMessages(path string) ([]protocol.Message, error) {
@@ -361,16 +426,27 @@ func writeTrajectory(path string, messages []protocol.Message) error {
 	return nil
 }
 
-func writeEventLog(path string, events []json.RawMessage) error {
+func openEventLog(path string) (*os.File, error) {
 	if path == "" {
+		return nil, nil
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("open event log: %w", err)
+	}
+	return file, nil
+}
+
+func appendEventLog(file *os.File, event eventEnvelope) error {
+	if file == nil {
 		return nil
 	}
-	var data []byte
-	for _, event := range events {
-		data = append(data, event...)
-		data = append(data, '\n')
+	data, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("marshal event log entry: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	data = append(data, '\n')
+	if _, err := file.Write(data); err != nil {
 		return fmt.Errorf("write event log: %w", err)
 	}
 	return nil

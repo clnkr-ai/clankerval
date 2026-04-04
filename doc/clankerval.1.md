@@ -39,10 +39,16 @@ Rename note: **clankerval** is the canonical command name. **clnkeval** remains 
 
 # EXAMPLES
 
-Run a suite from the current project:
+Run this repo's checked-in dummy self-test suite:
 
 ```bash
-clankerval run --suite default
+make evaluations
+```
+
+Run a consuming project's own suite:
+
+```bash
+clankerval run --suite default --binary /path/to/clnku
 ```
 
 Scaffold the default live-provider example suite:
@@ -54,7 +60,7 @@ clankerval init
 Compatibility alias:
 
 ```bash
-clnkeval run --suite default
+clnkeval run --suite default --binary /path/to/clnku
 clnkeval init
 ```
 

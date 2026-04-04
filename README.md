@@ -14,10 +14,10 @@ That produces `./clankerval` and a local `./clnkeval` symlink for compatibility.
 
 ## Usage
 
-Run a suite from the current project:
+Run the checked-in dummy self-test suite from this repo:
 
 ```bash
-clankerval run --suite default
+make evaluations
 ```
 
 Scaffold a new evaluations tree:
@@ -26,21 +26,24 @@ Scaffold a new evaluations tree:
 clankerval init
 ```
 
-The same commands work through the compatibility alias:
+In a consuming project with its own `evaluations/` tree, the compatibility alias accepts the same flags:
 
 ```bash
-clnkeval run --suite default
+clnkeval run --suite default --binary /path/to/clnku
 clnkeval init
 ```
 
 ## Examples
 
 ```bash
-# Run the checked-in self-test suite with the fixture agent
+# Run this repo's checked-in dummy suite with the fixture agent
 make evaluations
 
-# Run a project-owned suite against an external agent binary
+# Run a consuming project's own suite against an external agent binary
 clankerval run --suite default --binary /path/to/clnku
+
+# Same consumer workflow through the compatibility alias
+clnkeval run --suite default --binary /path/to/clnku
 
 # Scaffold the default live-provider example suite
 clankerval init

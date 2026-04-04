@@ -703,10 +703,23 @@ func TestFixtureAgentSupportsHarnessContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("dump system prompt: %v: %s", err, systemPrompt)
 	}
-	for _, want := range []string{"home instructions", "config instructions", "workspace instructions"} {
-		if !strings.Contains(string(systemPrompt), want) {
-			t.Fatalf("system prompt = %q, want substring %q", string(systemPrompt), want)
+	promptText := string(systemPrompt)
+	wantSections := []string{
+		"<user-instructions>\nhome instructions\n\n</user-instructions>",
+		"<config-instructions>\nconfig instructions\n\n</config-instructions>",
+		"<project-instructions>\nworkspace instructions\n\n</project-instructions>",
+		"clankerval eval fixture",
+	}
+	lastIndex := -1
+	for _, want := range wantSections {
+		index := strings.Index(promptText, want)
+		if index == -1 {
+			t.Fatalf("system prompt = %q, want section %q", promptText, want)
 		}
+		if index <= lastIndex {
+			t.Fatalf("system prompt = %q, want section order %v", promptText, wantSections)
+		}
+		lastIndex = index
 	}
 
 	trajectoryPath := filepath.Join(tempRoot, "trajectory.json")
@@ -819,6 +832,46 @@ func TestFixtureAgentSupportsHarnessContract(t *testing.T) {
 		t.Fatalf("ReadFile(note.txt): %v", err)
 	} else if string(data) != "hello\n" {
 		t.Fatalf("note.txt = %q, want hello\\n", string(data))
+	}
+}
+
+func TestFixtureAgentPromptFallsBackToHomeDotConfig(t *testing.T) {
+	fixturePath := mustEvalFixturePath(t)
+	tempRoot := t.TempDir()
+	workspaceDir := filepath.Join(tempRoot, "workspace")
+	homeDir := filepath.Join(tempRoot, "home")
+	configPath := filepath.Join(homeDir, ".config", "clnkr", "AGENTS.md")
+
+	for path, content := range map[string]string{
+		configPath:                               "config fallback instructions\n",
+		filepath.Join(workspaceDir, "AGENTS.md"): "workspace instructions\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("WriteFile(%q): %v", path, err)
+		}
+	}
+
+	cmd := exec.Command(fixturePath, "--dump-system-prompt")
+	cmd.Dir = workspaceDir
+	cmd.Env = append(os.Environ(),
+		"HOME="+homeDir,
+		"XDG_CONFIG_HOME=",
+	)
+	systemPrompt, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("dump system prompt: %v: %s", err, systemPrompt)
+	}
+
+	promptText := string(systemPrompt)
+	wantConfig := "<config-instructions>\nconfig fallback instructions\n\n</config-instructions>"
+	if !strings.Contains(promptText, wantConfig) {
+		t.Fatalf("system prompt = %q, want fallback section %q", promptText, wantConfig)
+	}
+	if !strings.Contains(promptText, "<project-instructions>\nworkspace instructions\n\n</project-instructions>") {
+		t.Fatalf("system prompt = %q, want project instructions section", promptText)
 	}
 }
 

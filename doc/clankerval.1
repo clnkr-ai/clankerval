@@ -45,10 +45,17 @@ Output directory for trial bundles and reports. Defaults to the evaluations dire
 
 
 .SH EXAMPLES
-Run a suite from the current project:
+Run this repo's checked-in dummy self-test suite:
 
 .EX
-clankerval run --suite default
+make evaluations
+.EE
+
+.PP
+Run a consuming project's own suite:
+
+.EX
+clankerval run --suite default --binary /path/to/clnku
 .EE
 
 .PP
@@ -62,7 +69,7 @@ clankerval init
 Compatibility alias:
 
 .EX
-clnkeval run --suite default
+clnkeval run --suite default --binary /path/to/clnku
 clnkeval init
 .EE
 
