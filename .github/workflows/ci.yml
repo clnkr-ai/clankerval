@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - debian/main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  check:
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install go-md2man
+        run: go install github.com/cpuguy83/go-md2man/v2@v2.0.6
+
+      - name: Run tests with race
+        run: make test
+
+      - name: Verify manpage sync
+        run: make _check-man
+
+      - name: Build binaries
+        run: make build
+
+      - name: Run dummy suite
+        run: make evaluations
+
+  package:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/debian/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: debian/main
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install Debian tooling
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: sudo apt-get update && sudo apt-get install -y debhelper dpkg-dev git-buildpackage lintian autopkgtest
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge origin/main into debian/main
+        run: |
+          git fetch origin main
+          git merge --no-edit origin/main
+
+      - name: Create orig tarball
+        run: |
+          VERSION="$(dpkg-parsechangelog -SVersion | sed 's/-[^-]*$//')"
+          git archive --format=tar.gz --prefix="clankerval-${VERSION}/" \
+            HEAD -- . ':(exclude)debian' > "../clankerval_${VERSION}.orig.tar.gz"
+
+      - name: Build package
+        run: dpkg-buildpackage -us -uc -d
+
+      - name: Run lintian
+        run: lintian --fail-on error ../*.changes
+
+      - name: Run autopkgtest
+        run: autopkgtest ../*_"$(dpkg-architecture -qDEB_HOST_ARCH)".changes -- null

@@ -1,0 +1,253 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  debian-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install Debian tooling
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: sudo apt-get update && sudo apt-get install -y debhelper dpkg-dev git-buildpackage lintian autopkgtest golang-go
+
+      - name: Configure git and dch environment
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo 'DEBFULLNAME=Brian Cosgrove' >> "$GITHUB_ENV"
+          echo 'DEBEMAIL=bcosgrove@gmail.com' >> "$GITHUB_ENV"
+
+      - name: Merge release SHA into debian/main
+        run: |
+          git checkout debian/main
+          git merge --no-edit "${{ github.sha }}"
+
+      - name: Generate changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PREV_TAG=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1)
+          if [ -n "${PREV_TAG}" ]; then
+            gbp dch --new-version="${VERSION}-1" --distribution=unstable --since="${PREV_TAG}" --commit
+          else
+            gbp dch --new-version="${VERSION}-1" --distribution=unstable --auto --commit
+          fi
+
+      - name: Generate orig tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          git archive --format=tar.gz --prefix="clankerval-${VERSION}/" \
+            HEAD -- . ':(exclude)debian' > "../clankerval_${VERSION}.orig.tar.gz"
+
+      - name: Build amd64 package
+        run: dpkg-buildpackage -us -uc -d
+
+      - name: Run lintian
+        run: |
+          lintian --suppress-tags bad-distribution-in-changes-file,latest-debian-changelog-entry-reuses-existing-version \
+            --fail-on error ../*.changes
+
+      - name: Run autopkgtest
+        run: autopkgtest ../clankerval_*_amd64.changes -- null
+
+      - name: Collect build output
+        run: |
+          cp ../clankerval_*.deb .
+          cp debian/changelog debian-changelog
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-amd64
+          path: clankerval_*.deb
+
+      - name: Upload changelog
+        uses: actions/upload-artifact@v4
+        with:
+          name: debian-changelog
+          path: debian-changelog
+
+  debian-arm64:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install Debian tooling
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: sudo apt-get update && sudo apt-get install -y debhelper dpkg-dev git-buildpackage lintian autopkgtest golang-go
+
+      - name: Configure git and dch environment
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          echo 'DEBFULLNAME=Brian Cosgrove' >> "$GITHUB_ENV"
+          echo 'DEBEMAIL=bcosgrove@gmail.com' >> "$GITHUB_ENV"
+
+      - name: Merge release SHA into debian/main
+        run: |
+          git checkout debian/main
+          git merge --no-edit "${{ github.sha }}"
+
+      - name: Generate changelog
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PREV_TAG=$(git tag -l 'v[0-9]*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1)
+          if [ -n "${PREV_TAG}" ]; then
+            gbp dch --new-version="${VERSION}-1" --distribution=unstable --since="${PREV_TAG}" --commit
+          else
+            gbp dch --new-version="${VERSION}-1" --distribution=unstable --auto --commit
+          fi
+
+      - name: Generate orig tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          git archive --format=tar.gz --prefix="clankerval-${VERSION}/" \
+            HEAD -- . ':(exclude)debian' > "../clankerval_${VERSION}.orig.tar.gz"
+
+      - name: Build arm64 package
+        run: dpkg-buildpackage -us -uc -d
+
+      - name: Run lintian
+        run: |
+          lintian --suppress-tags bad-distribution-in-changes-file,latest-debian-changelog-entry-reuses-existing-version \
+            --fail-on error ../*.changes
+
+      - name: Run autopkgtest
+        run: autopkgtest ../clankerval_*_arm64.changes -- null
+
+      - name: Collect build output
+        run: cp ../clankerval_*.deb .
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: deb-arm64
+          path: clankerval_*.deb
+
+  binaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Test release build inputs
+        run: make test
+
+      - name: Cross-compile binaries
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          for GOOS in linux darwin; do
+            for GOARCH in amd64 arm64; do
+              env CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" \
+                go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+                -o "clankerval-${GOOS}-${GOARCH}" ./cmd/clankerval/
+            done
+          done
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries
+          path: clankerval-*
+
+  release:
+    needs: [debian-amd64, debian-arm64, binaries]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Install dpkg-dev
+        run: sudo apt-get update && sudo apt-get install -y dpkg-dev
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Push debian/main and tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          git checkout debian/main
+          git merge --no-edit "${{ github.sha }}"
+          cp artifacts/debian-changelog/debian-changelog debian/changelog
+          git add debian/changelog
+          git commit --allow-empty -m "Update changelog for ${VERSION}-1"
+          git tag -f "debian/${VERSION}-1"
+          git push origin debian/main
+          git push origin --force "debian/${VERSION}-1"
+
+      - name: Collect assets
+        run: |
+          mkdir -p release
+          cp artifacts/deb-amd64/*.deb release/
+          cp artifacts/deb-arm64/*.deb release/
+          cp artifacts/binaries/clankerval-* release/
+
+      - name: Generate source tarball
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          git archive --format=tar.gz --prefix="clankerval-${VERSION}/" \
+            HEAD -- . ':(exclude)debian' > "release/clankerval_${VERSION}.orig.tar.gz"
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum ./* > SHA256SUMS
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: release/*
+
+      - name: Extract release notes
+        run: |
+          dpkg-parsechangelog -l artifacts/debian-changelog/debian-changelog \
+            --show-field Changes > release-notes.txt
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release delete "${GITHUB_REF_NAME}" --yes 2>/dev/null || true
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "clankerval ${VERSION}" \
+            --notes-file release-notes.txt \
+            release/*
