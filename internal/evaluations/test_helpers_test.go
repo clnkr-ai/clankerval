@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -66,4 +67,39 @@ var (
 	stageEvalClnkuOnce sync.Once
 	stageEvalClnkuPath string
 	stageEvalClnkuErr  error
+
+	stageEvalFixtureOnce sync.Once
+	stageEvalFixturePath string
+	stageEvalFixtureErr  error
 )
+
+func mustEvalFixturePath(t *testing.T) string {
+	t.Helper()
+
+	stageEvalFixtureOnce.Do(func() {
+		tempDir, err := os.MkdirTemp("", "clankerval-evalfixture-*")
+		if err != nil {
+			stageEvalFixtureErr = fmt.Errorf("create temp dir for staged eval fixture: %w", err)
+			return
+		}
+		stageEvalFixturePath = filepath.Join(tempDir, "evalfixture-agent")
+
+		cwd, err := os.Getwd()
+		if err != nil {
+			stageEvalFixtureErr = fmt.Errorf("getwd for eval fixture build: %w", err)
+			return
+		}
+		moduleRoot := filepath.Clean(filepath.Join(cwd, "..", ".."))
+
+		cmd := exec.Command("go", "build", "-o", stageEvalFixturePath, "./internal/testfixture/evalfixture-agent")
+		cmd.Dir = moduleRoot
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			stageEvalFixtureErr = fmt.Errorf("build staged eval fixture: %w: %s", err, output)
+		}
+	})
+	if stageEvalFixtureErr != nil {
+		t.Fatal(stageEvalFixtureErr)
+	}
+	return stageEvalFixturePath
+}

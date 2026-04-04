@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -162,6 +163,53 @@ func TestRun(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(repoRoot, "custom-output", "reports", "junit.xml")); err != nil {
 			t.Fatalf("report output missing under explicit cwd: %v", err)
+		}
+	})
+
+	t.Run("run repo-local dummy suite with compiled fixture binary", func(t *testing.T) {
+		moduleRoot := moduleRoot(t)
+		outputDir := t.TempDir()
+		stdout := &bytes.Buffer{}
+		stderr := &bytes.Buffer{}
+		exitCode := Run(
+			"clankerval",
+			"dev",
+			[]string{
+				"run",
+				"--suite", "dummy",
+				"--evals-dir", filepath.Join(moduleRoot, "testdata", "evaluations"),
+				"--binary", mustStageEvalFixture(t),
+				"--output-dir", outputDir,
+			},
+			moduleRoot,
+			stdout,
+			stderr,
+			func(string) string { return "" },
+		)
+		if exitCode != 0 {
+			t.Fatalf("exit code = %d, want 0; stderr=%q", exitCode, stderr.String())
+		}
+		if got, want := stdout.String(), "suite=dummy tasks=1 trials=1 passed=1 failed=0\n"; got != want {
+			t.Fatalf("stdout = %q, want %q", got, want)
+		}
+		for _, want := range []string{
+			"clankerval: binary ready",
+			`clankerval: task 1/1 "001-basic" trial 1/1 ...`,
+		} {
+			if !strings.Contains(stderr.String(), want) {
+				t.Fatalf("stderr = %q, want substring %q", stderr.String(), want)
+			}
+		}
+
+		for _, rel := range []string{
+			filepath.Join(outputDir, "reports", "junit.xml"),
+			filepath.Join(outputDir, "reports", "open-test-report.xml"),
+			filepath.Join(outputDir, "trials", "trial-dummy-000-00-001-basic", "bundle.json"),
+			filepath.Join(outputDir, "trials", "trial-dummy-000-00-001-basic", "outcome", "workspace", "note.txt"),
+		} {
+			if _, err := os.Stat(rel); err != nil {
+				t.Fatalf("Stat(%q): %v", rel, err)
+			}
 		}
 	})
 
@@ -341,6 +389,10 @@ var (
 	stageClnkuOnce sync.Once
 	stageClnkuPath string
 	stageClnkuErr  error
+
+	stageEvalFixtureOnce sync.Once
+	stageEvalFixturePath string
+	stageEvalFixtureErr  error
 )
 
 func mustStageClnku(t *testing.T) string {
@@ -362,6 +414,40 @@ func mustStageClnku(t *testing.T) string {
 		t.Fatal(stageClnkuErr)
 	}
 	return stageClnkuPath
+}
+
+func mustStageEvalFixture(t *testing.T) string {
+	t.Helper()
+
+	stageEvalFixtureOnce.Do(func() {
+		tempDir, err := os.MkdirTemp("", "clankerval-evalfixture-*")
+		if err != nil {
+			stageEvalFixtureErr = fmt.Errorf("create temp dir for staged eval fixture: %w", err)
+			return
+		}
+		stageEvalFixturePath = filepath.Join(tempDir, "evalfixture-agent")
+
+		cmd := exec.Command("go", "build", "-o", stageEvalFixturePath, "./internal/testfixture/evalfixture-agent")
+		cmd.Dir = moduleRoot(t)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			stageEvalFixtureErr = fmt.Errorf("build staged eval fixture: %w: %s", err, output)
+		}
+	})
+	if stageEvalFixtureErr != nil {
+		t.Fatal(stageEvalFixtureErr)
+	}
+	return stageEvalFixturePath
+}
+
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("Getwd(): %v", err)
+	}
+	return filepath.Clean(filepath.Join(cwd, "..", ".."))
 }
 
 type suiteSpec struct {

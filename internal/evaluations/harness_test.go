@@ -8,12 +8,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/clnkr-ai/clankerval/internal/protocol"
+	"github.com/clnkr-ai/clankerval/internal/transcript"
 )
 
 func TestLoadRunConfigFromEnv(t *testing.T) {
@@ -646,6 +648,178 @@ func TestRunTrial(t *testing.T) {
 			t.Fatalf("temp root stat error = %v, want not exist", err)
 		}
 	})
+}
+
+func TestFixtureAgentSupportsHarnessContract(t *testing.T) {
+	fixturePath := mustEvalFixturePath(t)
+	tempRoot := t.TempDir()
+	workspaceDir := filepath.Join(tempRoot, "workspace")
+	homeDir := filepath.Join(tempRoot, "home")
+	configDir := filepath.Join(tempRoot, "config")
+	if err := os.MkdirAll(filepath.Join(configDir, "clnkr"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(config/clnkr): %v", err)
+	}
+	for path, content := range map[string]string{
+		filepath.Join(workspaceDir, "AGENTS.md"):       "workspace instructions\n",
+		filepath.Join(homeDir, "AGENTS.md"):            "home instructions\n",
+		filepath.Join(configDir, "clnkr", "AGENTS.md"): "config instructions\n",
+		filepath.Join(tempRoot, "seed-messages.json"):  "",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q): %v", filepath.Dir(path), err)
+		}
+		if content != "" {
+			if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+				t.Fatalf("WriteFile(%q): %v", path, err)
+			}
+		}
+	}
+
+	seedMessages := []protocol.Message{
+		{Role: "user", Content: "seed instruction"},
+	}
+	seedPath := filepath.Join(tempRoot, "seed-messages.json")
+	seedBytes, err := json.Marshal(seedMessages)
+	if err != nil {
+		t.Fatalf("json.Marshal(seedMessages): %v", err)
+	}
+	if err := os.WriteFile(seedPath, seedBytes, 0o644); err != nil {
+		t.Fatalf("WriteFile(seed messages): %v", err)
+	}
+
+	baseEnv := append(os.Environ(),
+		"HOME="+homeDir,
+		"XDG_CONFIG_HOME="+configDir,
+		"XDG_STATE_HOME="+filepath.Join(tempRoot, "state"),
+		"CLNKR_BASE_URL=",
+		"CLNKR_API_KEY=",
+		"CLNKR_MODEL=",
+	)
+
+	dumpCmd := exec.Command(fixturePath, "--dump-system-prompt")
+	dumpCmd.Dir = workspaceDir
+	dumpCmd.Env = baseEnv
+	systemPrompt, err := dumpCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("dump system prompt: %v: %s", err, systemPrompt)
+	}
+	for _, want := range []string{"home instructions", "config instructions", "workspace instructions"} {
+		if !strings.Contains(string(systemPrompt), want) {
+			t.Fatalf("system prompt = %q, want substring %q", string(systemPrompt), want)
+		}
+	}
+
+	trajectoryPath := filepath.Join(tempRoot, "trajectory.json")
+	eventLogPath := filepath.Join(tempRoot, "events.jsonl")
+	runCmd := exec.Command(
+		fixturePath,
+		"-p", "Create note.txt in the repo root with the contents hello and then finish.",
+		"--event-log", eventLogPath,
+		"--trajectory", trajectoryPath,
+		"--max-steps", "10",
+		"--full-send",
+		"--load-messages", seedPath,
+	)
+	runCmd.Dir = workspaceDir
+	runCmd.Env = baseEnv
+	output, err := runCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("run fixture: %v: %s", err, output)
+	}
+
+	trajectoryBytes, err := os.ReadFile(trajectoryPath)
+	if err != nil {
+		t.Fatalf("ReadFile(trajectory): %v", err)
+	}
+	var trajectory []protocol.Message
+	if err := json.Unmarshal(trajectoryBytes, &trajectory); err != nil {
+		t.Fatalf("parse trajectory: %v", err)
+	}
+	if len(trajectory) != 6 {
+		t.Fatalf("trajectory length = %d, want 6 messages", len(trajectory))
+	}
+	if trajectory[0] != seedMessages[0] {
+		t.Fatalf("seed message = %#v, want %#v", trajectory[0], seedMessages[0])
+	}
+	if trajectory[1].Role != "user" || !strings.Contains(trajectory[1].Content, "Create note.txt") {
+		t.Fatalf("task prompt message = %#v, want user instruction", trajectory[1])
+	}
+	if trajectory[2].Role != "user" {
+		t.Fatalf("state message role = %q, want user", trajectory[2].Role)
+	}
+	if cwd, ok := transcript.ExtractStateCwd(trajectory[2].Content); !ok || cwd != workspaceDir {
+		t.Fatalf("state message = %q, want cwd %q", trajectory[2].Content, workspaceDir)
+	}
+	actTurn, err := protocol.ParseTurn(trajectory[3].Content)
+	if err != nil {
+		t.Fatalf("parse act turn: %v", err)
+	}
+	act, ok := actTurn.(*protocol.ActTurn)
+	if !ok {
+		t.Fatalf("assistant turn type = %T, want *protocol.ActTurn", actTurn)
+	}
+	if act.Command != "printf 'hello\n' > note.txt" {
+		t.Fatalf("act command = %q, want note writer", act.Command)
+	}
+	if trajectory[4].Role != "user" || !strings.Contains(trajectory[4].Content, "[command]\nprintf 'hello\n' &gt; note.txt\n[/command]") {
+		t.Fatalf("command result message = %q, want command envelope", trajectory[4].Content)
+	}
+	doneTurn, err := protocol.ParseTurn(trajectory[5].Content)
+	if err != nil {
+		t.Fatalf("parse done turn: %v", err)
+	}
+	done, ok := doneTurn.(*protocol.DoneTurn)
+	if !ok {
+		t.Fatalf("final turn type = %T, want *protocol.DoneTurn", doneTurn)
+	}
+	if done.Summary != "fixture task completed" {
+		t.Fatalf("done summary = %q, want fixture task completed", done.Summary)
+	}
+
+	eventLogBytes, err := os.ReadFile(eventLogPath)
+	if err != nil {
+		t.Fatalf("ReadFile(event log): %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(eventLogBytes)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("event log lines = %d, want 2", len(lines))
+	}
+	var start struct {
+		Type    string `json:"type"`
+		Payload struct {
+			Command string `json:"command"`
+			Dir     string `json:"dir"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(lines[0]), &start); err != nil {
+		t.Fatalf("parse command_start event: %v", err)
+	}
+	if start.Type != "command_start" || start.Payload.Command != "printf 'hello\n' > note.txt" || start.Payload.Dir != workspaceDir {
+		t.Fatalf("command_start = %#v, want command_start for %q in %q", start, "printf 'hello\n' > note.txt", workspaceDir)
+	}
+	var doneEvent struct {
+		Type    string `json:"type"`
+		Payload struct {
+			Command  string `json:"command"`
+			Stdout   string `json:"stdout"`
+			Stderr   string `json:"stderr"`
+			ExitCode int    `json:"exit_code"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &doneEvent); err != nil {
+		t.Fatalf("parse command_done event: %v", err)
+	}
+	if doneEvent.Type != "command_done" || doneEvent.Payload.Command != "printf 'hello\n' > note.txt" || doneEvent.Payload.ExitCode != 0 {
+		t.Fatalf("command_done = %#v, want successful note writer", doneEvent)
+	}
+	if got := strings.TrimSpace(doneEvent.Payload.Stdout + doneEvent.Payload.Stderr); got != "" {
+		t.Fatalf("command output = %q, want empty stdout/stderr", got)
+	}
+	if data, err := os.ReadFile(filepath.Join(workspaceDir, "note.txt")); err != nil {
+		t.Fatalf("ReadFile(note.txt): %v", err)
+	} else if string(data) != "hello\n" {
+		t.Fatalf("note.txt = %q, want hello\\n", string(data))
+	}
 }
 
 func loadDefaultBasicEdit(t *testing.T, repoRoot string) (Suite, Task) {

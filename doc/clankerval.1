@@ -1,0 +1,82 @@
+.nh
+.TH clankerval 1 "clankerval" "User Commands"
+
+.SH NAME
+clankerval \- evaluation runner for clnkr-compatible agents
+
+
+.SH SYNOPSIS
+\fBclankerval\fP [\fB--help\fP] [\fB--version\fP] \fIcommand\fP [\fIflags\fP]
+
+
+.SH DESCRIPTION
+\fBclankerval\fP runs evaluation suites owned by a consuming project. It currently supports two commands: \fBrun\fP to execute a suite and \fBinit\fP to scaffold a default evaluations tree.
+
+.PP
+Rename note: \fBclankerval\fP is the canonical command name. \fBclnkeval\fP remains supported as a compatibility alias, and both commands accept the same flags.
+
+
+.SH COMMANDS
+.TP
+\fBrun\fP
+Run an evaluation suite against the current directory.
+
+.TP
+\fBinit\fP
+Scaffold an \fBevaluations/\fP directory with the default live-provider example suite.
+
+
+.SH RUN OPTIONS
+.TP
+\fB--suite\fP \fIid\fP
+Suite identifier to run. Defaults to \fBdefault\fP\&.
+
+.TP
+\fB--binary\fP \fIpath\fP
+Path to the agent binary under test. When omitted, \fBclankerval\fP builds \fB\&./cmd/clnku\fP from the current source tree when present; otherwise it resolves \fBclnku\fP from \fBPATH\fP\&.
+
+.TP
+\fB--evals-dir\fP \fIpath\fP
+Evaluations directory. Defaults to \fB\&./evaluations\fP relative to the current working directory.
+
+.TP
+\fB--output-dir\fP \fIpath\fP
+Output directory for trial bundles and reports. Defaults to the evaluations directory.
+
+
+.SH EXAMPLES
+Run a suite from the current project:
+
+.EX
+clankerval run --suite default
+.EE
+
+.PP
+Scaffold the default live-provider example suite:
+
+.EX
+clankerval init
+.EE
+
+.PP
+Compatibility alias:
+
+.EX
+clnkeval run --suite default
+clnkeval init
+.EE
+
+
+.SH EXIT STATUS
+.TP
+\fB0\fP
+Success.
+
+.TP
+\fB1\fP
+Error.
+
+
+.SH AUTHOR
+Brian Cosgrove cosgroveb@gmail.com
+\[la]mailto:cosgroveb@gmail.com\[ra]
