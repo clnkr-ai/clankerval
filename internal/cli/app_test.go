@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/clnkr-ai/clankerval/internal/evaluations"
+	"github.com/clnkr-ai/clankerval/internal/testsupport/clnkusim"
 )
 
 func TestRun(t *testing.T) {
@@ -63,7 +63,10 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("run without --binary still builds ./cmd/clnku when source tree exists", func(t *testing.T) {
-		legacyRepoRoot := clnkrRepoRoot(t)
+		sourceRepoRoot := t.TempDir()
+		if err := clnkusim.WriteSourceTree(sourceRepoRoot); err != nil {
+			t.Fatalf("WriteSourceTree(): %v", err)
+		}
 		suiteRepoRoot := newTempRepoRoot(t)
 		suiteID := writeTempSuite(t, suiteRepoRoot, suiteSpec{
 			trialsPerTask: 1,
@@ -78,7 +81,7 @@ func TestRun(t *testing.T) {
 			"clankerval",
 			"dev",
 			[]string{"run", "--suite", suiteID, "--evals-dir", filepath.Join(suiteRepoRoot, "evaluations"), "--output-dir", outputDir},
-			legacyRepoRoot,
+			sourceRepoRoot,
 			stdout,
 			stderr,
 			func(string) string { return "" },
@@ -334,17 +337,6 @@ func newTempRepoRoot(t *testing.T) string {
 	return root
 }
 
-func clnkrRepoRoot(t *testing.T) string {
-	t.Helper()
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Getwd(): %v", err)
-	}
-	newRepoRoot := filepath.Dir(filepath.Dir(cwd))
-	return filepath.Join(filepath.Dir(newRepoRoot), "clnkr")
-}
-
 var (
 	stageClnkuOnce sync.Once
 	stageClnkuPath string
@@ -362,11 +354,8 @@ func mustStageClnku(t *testing.T) string {
 		}
 		stageClnkuPath = filepath.Join(tempDir, "clnku")
 
-		cmd := exec.Command("go", "build", "-o", stageClnkuPath, "./cmd/clnku")
-		cmd.Dir = clnkrRepoRoot(t)
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			stageClnkuErr = fmt.Errorf("build staged clnku: %w: %s", err, strings.TrimSpace(string(output)))
+		if err := clnkusim.BuildBinary(stageClnkuPath); err != nil {
+			stageClnkuErr = fmt.Errorf("build staged clnku: %w", err)
 		}
 	})
 	if stageClnkuErr != nil {
