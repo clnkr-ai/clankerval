@@ -78,4 +78,4 @@ jobs:
             --fail-on error ../*.changes
 
       - name: Run autopkgtest
-        run: autopkgtest ../*_"$(dpkg-architecture -qDEB_HOST_ARCH)".changes -- null
+        run: sudo autopkgtest ../*_"$(dpkg-architecture -qDEB_HOST_ARCH)".changes -- null

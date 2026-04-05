@@ -68,7 +68,7 @@ jobs:
             --fail-on error ../*.changes
 
       - name: Run autopkgtest
-        run: autopkgtest ../clankerval_*_amd64.changes -- null
+        run: sudo autopkgtest ../clankerval_*_amd64.changes -- null
 
       - name: Collect build output
         run: |
@@ -140,7 +140,7 @@ jobs:
             --fail-on error ../*.changes
 
       - name: Run autopkgtest
-        run: autopkgtest ../clankerval_*_arm64.changes -- null
+        run: sudo autopkgtest ../clankerval_*_arm64.changes -- null
 
       - name: Collect build output
         run: cp ../clankerval_*.deb .
