@@ -1,3 +1,20 @@
+clankerval (0.1.1-1) unstable; urgency=medium
+
+  [ Brian Cosgrove ]
+  * Add Debian packaging for clankerval
+  * Remove generated Debian build artifacts
+
+  [ reviewer ]
+  * Lower Go floor to 1.22
+  * Align Debian packaging with Go 1.22
+  * Normalize first Debian upload to 0.1.0-1
+
+  [ github-actions[bot] ]
+  * Update changelog for 0.1.0-1
+  * Fix duplicate Debian changelog entries on release
+
+ -- Brian Cosgrove <bcosgrove@gmail.com>  Sun, 05 Apr 2026 01:03:46 +0000
+
 clankerval (0.1.0-1) unstable; urgency=medium
 
   [ reviewer ]
