@@ -44,14 +44,10 @@ jobs:
           fetch-depth: 0
           ref: debian/main
 
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
       - name: Install Debian tooling
         env:
           DEBIAN_FRONTEND: noninteractive
-        run: sudo apt-get update && sudo apt-get install -y debhelper dpkg-dev git-buildpackage lintian autopkgtest
+        run: sudo apt-get update && sudo apt-get install -y debhelper dpkg-dev git-buildpackage lintian autopkgtest golang-go
 
       - name: Configure git
         run: |
@@ -70,7 +66,7 @@ jobs:
             HEAD -- . ':(exclude)debian' > "../clankerval_${VERSION}.orig.tar.gz"
 
       - name: Build package
-        run: dpkg-buildpackage -us -uc -d
+        run: dpkg-buildpackage -us -uc
 
       - name: Run lintian
         run: |
