@@ -70,8 +70,7 @@ jobs:
 
       - name: Run lintian
         run: |
-          lintian --suppress-tags bad-distribution-in-changes-file \
-            --fail-on error ../*.changes
+          lintian --profile debian --fail-on error ../*.changes
 
       - name: Run autopkgtest
         run: sudo autopkgtest ../*_"$(dpkg-architecture -qDEB_HOST_ARCH)".changes -- null
