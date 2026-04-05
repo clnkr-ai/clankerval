@@ -1,12 +1,7 @@
-clankerval (0.1.0-2) unstable; urgency=medium
+clankerval (0.1.0-1) unstable; urgency=medium
 
+  * Initial release.
   * Lower Go build dependency floor to 1.22 and override static Go
     binaries.
 
  -- Brian Cosgrove <bcosgrove@gmail.com>  Sun, 05 Apr 2026 00:22:34 +0000
-
-clankerval (0.1.0-1) unstable; urgency=medium
-
-  * Initial release.
-
- -- Brian Cosgrove <bcosgrove@gmail.com>  Sat, 04 Apr 2026 23:51:03 +0000
