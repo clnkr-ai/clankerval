@@ -47,7 +47,7 @@ jobs:
       - name: Install Debian tooling
         env:
           DEBIAN_FRONTEND: noninteractive
-        run: sudo apt-get update && sudo apt-get install -y debhelper dpkg-dev git-buildpackage lintian autopkgtest golang-go
+        run: sudo apt-get update && sudo apt-get install -y build-essential debhelper dpkg-dev git-buildpackage lintian autopkgtest golang-go
 
       - name: Configure git
         run: |
