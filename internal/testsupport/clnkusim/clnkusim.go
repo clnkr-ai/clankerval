@@ -50,7 +50,7 @@ func BuildBinary(outputPath string) error {
 
 const goModFile = `module example.com/clnkusim
 
-go 1.25
+go 1.22
 `
 
 const mainFile = `package main
