@@ -3,7 +3,7 @@ Section: devel
 Priority: optional
 Maintainer: Brian Cosgrove <bcosgrove@gmail.com>
 Build-Depends: debhelper-compat (= 13),
-               golang-go (>= 2:1.25~)
+               golang-go (>= 2:1.22~)
 Standards-Version: 4.6.2
 Homepage: https://github.com/clnkr-ai/clankerval
 Vcs-Git: https://github.com/clnkr-ai/clankerval.git -b debian/main

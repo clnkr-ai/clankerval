@@ -1,0 +1,3 @@
+# Go binaries are intentionally built with CGO disabled.
+statically-linked-binary [usr/bin/clankerval]
+statically-linked-binary [usr/libexec/clankerval/examples/evalfixture-agent]
