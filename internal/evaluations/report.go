@@ -16,6 +16,7 @@ type TrialReport struct {
 	SuiteTaskIndex        int            `json:"suite_task_index"`
 	TrialAttempt          int            `json:"trial_attempt"`
 	Mode                  Mode           `json:"mode"`
+	Agent                 BundleAgent    `json:"agent"`
 	StartedAt             string         `json:"started_at"`
 	FinishedAt            string         `json:"finished_at"`
 	Passed                bool           `json:"passed"`
@@ -94,6 +95,7 @@ func BuildRunReport(bundles []Bundle) (RunReport, error) {
 			SuiteTaskIndex:        bundle.SuiteTaskIndex,
 			TrialAttempt:          bundle.TrialAttempt,
 			Mode:                  bundle.Mode,
+			Agent:                 bundle.Agent,
 			StartedAt:             bundle.StartedAt,
 			FinishedAt:            bundle.FinishedAt,
 			Passed:                bundle.TrialPassed,
@@ -110,6 +112,10 @@ func BuildRunReport(bundles []Bundle) (RunReport, error) {
 			taskOrder = append(taskOrder, bundle.SuiteTaskIndex)
 		} else if task.TaskID != bundle.TaskID {
 			return RunReport{}, fmt.Errorf("build run report: suite task index %d maps to %q and %q", bundle.SuiteTaskIndex, task.TaskID, bundle.TaskID)
+		}
+
+		if len(task.Trials) > 0 && task.Trials[0].Agent.ID != bundle.Agent.ID {
+			return RunReport{}, fmt.Errorf("build run report: task %q (suite task index %d) has inconsistent agent identity %q vs %q", bundle.TaskID, bundle.SuiteTaskIndex, task.Trials[0].Agent.ID, bundle.Agent.ID)
 		}
 
 		task.Trials = append(task.Trials, trial)

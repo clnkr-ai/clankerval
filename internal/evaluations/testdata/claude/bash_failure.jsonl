@@ -1,0 +1,4 @@
+{"type":"user","uuid":"u1","parentUuid":"","sessionId":"sess-002","timestamp":"2026-04-06T10:00:00Z","message":{"role":"user","content":"Run a failing command"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","sessionId":"sess-002","timestamp":"2026-04-06T10:00:01Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Bash","id":"toolu_fail1","input":{"command":"exit 7"}}]}}
+{"type":"user","uuid":"u2","parentUuid":"a1","sessionId":"sess-002","timestamp":"2026-04-06T10:00:02Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fail1","is_error":true,"content":"Exit code 7\nout\nerr"}]},"toolUseResult":"Error: Exit code 7\nout\nerr"}
+{"type":"assistant","uuid":"a2","parentUuid":"u2","sessionId":"sess-002","timestamp":"2026-04-06T10:00:03Z","message":{"role":"assistant","content":[{"type":"text","text":"The command failed with exit code 7."}]}}

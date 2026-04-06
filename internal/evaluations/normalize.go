@@ -1,20 +1,13 @@
 package evaluations
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"html"
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
-
-	"github.com/clnkr-ai/clankerval/internal/protocol"
-	"github.com/clnkr-ai/clankerval/internal/transcript"
 )
 
 type normalizationRoots struct {
@@ -60,98 +53,96 @@ type NormalizedWorkspaceFile struct {
 	SHA256    string `json:"sha256"`
 }
 
-type eventEnvelope struct {
-	Type    string          `json:"type"`
-	Payload json.RawMessage `json:"payload"`
-}
 
-type commandStartEvent struct {
-	Command string `json:"command"`
-	Dir     string `json:"dir"`
-}
-
-type commandDoneEvent struct {
-	Command  string `json:"command"`
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
-	ExitCode int    `json:"exit_code"`
-	Err      string `json:"err,omitempty"`
-}
-
-type commandResultEnvelope struct {
-	Command  string
-	Stdout   string
-	Stderr   string
-	ExitCode int
-}
-
-// NormalizeTranscript projects a stable transcript record sequence from raw trial artifacts.
+// NormalizeTranscript projects a stable transcript record sequence from
+// adapter-supplied TranscriptEvents and Commands. Path and text normalization
+// is applied here; source-format parsing lives in the adapter.
 func NormalizeTranscript(artifacts RunArtifacts) ([]NormalizedTranscriptRecord, error) {
-	messages, err := parseRawTranscript(artifacts.Trajectory)
-	if err != nil {
-		return nil, fmt.Errorf("normalize transcript: %w", err)
-	}
-	starts, dones, err := parseCommandLifecycleEvents(artifacts.EventLog)
-	if err != nil {
-		return nil, fmt.Errorf("normalize transcript: %w", err)
-	}
-
 	roots := artifacts.normalizationRoots()
-	records := make([]NormalizedTranscriptRecord, 0, len(messages)+len(starts)+len(dones))
-	startIndex := 0
-	doneIndex := 0
+	events := artifacts.TranscriptEvents
+	commands := artifacts.Commands
+	records := make([]NormalizedTranscriptRecord, 0, len(events)+len(commands))
+	cmdIndex := 0
 
-	for _, message := range messages {
-		switch message.Role {
-		case "system":
+	for _, ev := range events {
+		switch ev.Kind {
+		case "system_prompt":
 			records = append(records, NormalizedTranscriptRecord{
 				Index:   len(records),
 				Kind:    "system_prompt",
 				Role:    "system",
-				Content: normalizeText(message.Content, roots),
+				Content: normalizeText(ev.Content, roots),
 			})
-		case "assistant":
-			record, startConsumed, err := normalizeAssistantMessage(message.Content, roots, starts, startIndex, len(records))
-			if err != nil {
-				return nil, fmt.Errorf("normalize assistant message: %w", err)
+		case "user_instruction":
+			records = append(records, NormalizedTranscriptRecord{
+				Index:   len(records),
+				Kind:    "user_instruction",
+				Role:    "user",
+				Content: normalizeText(ev.Content, roots),
+			})
+		case "assistant_turn":
+			rec := NormalizedTranscriptRecord{
+				Index:    len(records),
+				Kind:     "assistant_turn",
+				Role:     "assistant",
+				TurnType: ev.TurnType,
+				Content:  normalizeText(ev.Content, roots),
 			}
-			records = append(records, record...)
-			if startConsumed {
-				startIndex++
-			}
-		case "user":
-			switch {
-			case isStateUpdateMessage(message.Content):
-				cwd, _ := transcript.ExtractStateCwd(message.Content)
+			records = append(records, rec)
+			// For act turns, synthesize a command_start from the next Command.
+			if ev.TurnType == "act" && cmdIndex < len(commands) {
 				records = append(records, NormalizedTranscriptRecord{
-					Index: len(records),
-					Kind:  "state_update",
-					Role:  "user",
-					Cwd:   normalizePath(cwd, roots),
-				})
-			case isCommandResultMessage(message.Content):
-				record, consumed, err := normalizeCommandResultMessage(message.Content, roots, dones, doneIndex, len(records))
-				if err != nil {
-					return nil, fmt.Errorf("normalize command result: %w", err)
-				}
-				records = append(records, record)
-				if consumed {
-					doneIndex++
-				}
-			default:
-				records = append(records, NormalizedTranscriptRecord{
-					Index:   len(records),
-					Kind:    "user_instruction",
-					Role:    "user",
-					Content: normalizeText(message.Content, roots),
+					Index:    len(records),
+					Kind:     "command_start",
+					Role:     "system",
+					TurnType: "act",
+					Command:  normalizeText(commands[cmdIndex].Command, roots),
+					Cwd:      normalizePath(commands[cmdIndex].Dir, roots),
 				})
 			}
+		case "command_result":
+			rec := NormalizedTranscriptRecord{
+				Index: len(records),
+				Kind:  "command_result",
+				Role:  "user",
+			}
+			if cmdIndex < len(commands) {
+				rec.Command = normalizeText(commands[cmdIndex].Command, roots)
+				rec.Stdout = normalizeText(commands[cmdIndex].Stdout, roots)
+				rec.Stderr = normalizeText(commands[cmdIndex].Stderr, roots)
+				rec.ExitCode = commands[cmdIndex].ExitCode
+				cmdIndex++
+			}
+			records = append(records, rec)
+		case "state_update":
+			records = append(records, NormalizedTranscriptRecord{
+				Index: len(records),
+				Kind:  "state_update",
+				Role:  "user",
+				Cwd:   normalizePath(ev.Cwd, roots),
+			})
+		case "clarification":
+			records = append(records, NormalizedTranscriptRecord{
+				Index:    len(records),
+				Kind:     "clarification",
+				Role:     "assistant",
+				TurnType: ev.TurnType,
+				Content:  normalizeText(ev.Content, roots),
+			})
+		case "completion":
+			records = append(records, NormalizedTranscriptRecord{
+				Index:    len(records),
+				Kind:     "completion",
+				Role:     "assistant",
+				TurnType: ev.TurnType,
+				Content:  normalizeText(ev.Content, roots),
+			})
 		default:
 			records = append(records, NormalizedTranscriptRecord{
 				Index:   len(records),
-				Kind:    "assistant_turn",
-				Role:    message.Role,
-				Content: normalizeText(message.Content, roots),
+				Kind:    ev.Kind,
+				Role:    ev.Role,
+				Content: normalizeText(ev.Content, roots),
 			})
 		}
 	}
@@ -160,23 +151,16 @@ func NormalizeTranscript(artifacts RunArtifacts) ([]NormalizedTranscriptRecord, 
 }
 
 // NormalizeOutcome derives a stable end-state summary from raw trial artifacts.
+// Final cwd is derived from the last state_update TranscriptEvent rather than
+// re-parsing agent-specific transcript payloads.
 func NormalizeOutcome(artifacts RunArtifacts, outcomeWorkspaceRel string) (NormalizedOutcome, error) {
-	messages, err := parseRawTranscript(artifacts.Trajectory)
-	if err != nil {
-		return NormalizedOutcome{}, fmt.Errorf("normalize outcome: %w", err)
-	}
-
-	transcriptMessages := make([]transcript.Message, 0, len(messages))
-	for _, message := range messages {
-		transcriptMessages = append(transcriptMessages, transcript.Message{
-			Role:    message.Role,
-			Content: message.Content,
-		})
-	}
-
 	finalCwd := ""
-	if cwd, ok := transcript.ExtractLatestCwd(transcriptMessages); ok {
-		finalCwd = normalizePath(cwd, artifacts.normalizationRoots())
+	for i := len(artifacts.TranscriptEvents) - 1; i >= 0; i-- {
+		ev := artifacts.TranscriptEvents[i]
+		if ev.Kind == "state_update" && ev.Cwd != "" {
+			finalCwd = normalizePath(ev.Cwd, artifacts.normalizationRoots())
+			break
+		}
 	}
 
 	workspacePaths := make([]string, 0, len(artifacts.Workspace))
@@ -205,133 +189,6 @@ func NormalizeOutcome(artifacts RunArtifacts, outcomeWorkspaceRel string) (Norma
 	}, nil
 }
 
-func normalizeAssistantMessage(content string, roots normalizationRoots, starts []commandStartEvent, startIndex, recordIndex int) ([]NormalizedTranscriptRecord, bool, error) {
-	turn, err := protocol.ParseTurn(content)
-	if err != nil {
-		return []NormalizedTranscriptRecord{{
-			Index:   recordIndex,
-			Kind:    "assistant_turn",
-			Role:    "assistant",
-			Content: normalizeText(content, roots),
-		}}, false, nil
-	}
-
-	switch turn := turn.(type) {
-	case *protocol.ActTurn:
-		records := []NormalizedTranscriptRecord{{
-			Index:    recordIndex,
-			Kind:     "assistant_turn",
-			Role:     "assistant",
-			TurnType: "act",
-			Content:  normalizeText(content, roots),
-		}}
-		if startIndex < len(starts) {
-			records = append(records, NormalizedTranscriptRecord{
-				Index:    recordIndex + 1,
-				Kind:     "command_start",
-				Role:     "system",
-				TurnType: "act",
-				Command:  normalizeText(starts[startIndex].Command, roots),
-				Cwd:      normalizePath(starts[startIndex].Dir, roots),
-			})
-			return records, true, nil
-		}
-		return records, false, nil
-	case *protocol.ClarifyTurn:
-		return []NormalizedTranscriptRecord{{
-			Index:    recordIndex,
-			Kind:     "clarification",
-			Role:     "assistant",
-			TurnType: "clarify",
-			Content:  normalizeText(turn.Question, roots),
-		}}, false, nil
-	case *protocol.DoneTurn:
-		return []NormalizedTranscriptRecord{{
-			Index:    recordIndex,
-			Kind:     "completion",
-			Role:     "assistant",
-			TurnType: "done",
-			Content:  normalizeText(turn.Summary, roots),
-		}}, false, nil
-	default:
-		return nil, false, fmt.Errorf("unexpected assistant turn type %T", turn)
-	}
-}
-
-func normalizeCommandResultMessage(content string, roots normalizationRoots, dones []commandDoneEvent, doneIndex, recordIndex int) (NormalizedTranscriptRecord, bool, error) {
-	if doneIndex < len(dones) {
-		done := dones[doneIndex]
-		return NormalizedTranscriptRecord{
-			Index:    recordIndex,
-			Kind:     "command_result",
-			Role:     "user",
-			Command:  normalizeText(done.Command, roots),
-			Stdout:   normalizeText(done.Stdout, roots),
-			Stderr:   normalizeText(done.Stderr, roots),
-			ExitCode: done.ExitCode,
-		}, true, nil
-	}
-
-	envelope, ok := parseCommandResultEnvelope(content)
-	if !ok {
-		return NormalizedTranscriptRecord{}, false, fmt.Errorf("parse command result transcript payload")
-	}
-	return NormalizedTranscriptRecord{
-		Index:    recordIndex,
-		Kind:     "command_result",
-		Role:     "user",
-		Command:  normalizeText(envelope.Command, roots),
-		Stdout:   normalizeText(envelope.Stdout, roots),
-		Stderr:   normalizeText(envelope.Stderr, roots),
-		ExitCode: envelope.ExitCode,
-	}, false, nil
-}
-
-func parseRawTranscript(raw string) ([]protocol.Message, error) {
-	var messages []protocol.Message
-	if err := json.Unmarshal([]byte(raw), &messages); err != nil {
-		return nil, fmt.Errorf("parse raw transcript: %w", err)
-	}
-	return messages, nil
-}
-
-func parseCommandLifecycleEvents(raw string) ([]commandStartEvent, []commandDoneEvent, error) {
-	starts := []commandStartEvent{}
-	dones := []commandDoneEvent{}
-
-	scanner := bufio.NewScanner(strings.NewReader(raw))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-
-		var envelope eventEnvelope
-		if err := json.Unmarshal([]byte(line), &envelope); err != nil {
-			return nil, nil, fmt.Errorf("parse event log line: %w", err)
-		}
-
-		switch envelope.Type {
-		case "command_start":
-			var start commandStartEvent
-			if err := json.Unmarshal(envelope.Payload, &start); err != nil {
-				return nil, nil, fmt.Errorf("parse command_start payload: %w", err)
-			}
-			starts = append(starts, start)
-		case "command_done":
-			var done commandDoneEvent
-			if err := json.Unmarshal(envelope.Payload, &done); err != nil {
-				return nil, nil, fmt.Errorf("parse command_done payload: %w", err)
-			}
-			dones = append(dones, done)
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, nil, fmt.Errorf("scan event log: %w", err)
-	}
-
-	return starts, dones, nil
-}
 
 func normalizeText(value string, roots normalizationRoots) string {
 	if value == "" {
@@ -430,59 +287,6 @@ func buildPathReplacements(roots normalizationRoots) []pathReplacement {
 	return replacements
 }
 
-func isStateUpdateMessage(content string) bool {
-	_, ok := transcript.ExtractStateCwd(content)
-	return ok
-}
-
-func isCommandResultMessage(content string) bool {
-	_, ok := parseCommandResultEnvelope(content)
-	return ok
-}
-
-func parseCommandResultEnvelope(content string) (commandResultEnvelope, bool) {
-	command, ok := extractTaggedSection(content, "[command]", "[/command]")
-	if !ok {
-		return commandResultEnvelope{}, false
-	}
-	exitCodeStr, ok := extractTaggedSection(content, "[exit_code]", "[/exit_code]")
-	if !ok {
-		return commandResultEnvelope{}, false
-	}
-	stdout, ok := extractTaggedSection(content, "[stdout]", "[/stdout]")
-	if !ok {
-		return commandResultEnvelope{}, false
-	}
-	stderr, ok := extractTaggedSection(content, "[stderr]", "[/stderr]")
-	if !ok {
-		return commandResultEnvelope{}, false
-	}
-
-	exitCode, err := strconv.Atoi(strings.TrimSpace(exitCodeStr))
-	if err != nil {
-		return commandResultEnvelope{}, false
-	}
-
-	return commandResultEnvelope{
-		Command:  html.UnescapeString(command),
-		Stdout:   html.UnescapeString(stdout),
-		Stderr:   html.UnescapeString(stderr),
-		ExitCode: exitCode,
-	}, true
-}
-
-func extractTaggedSection(content, openTag, closeTag string) (string, bool) {
-	start := strings.Index(content, openTag)
-	if start < 0 {
-		return "", false
-	}
-	start += len(openTag)
-	end := strings.Index(content[start:], closeTag)
-	if end < 0 {
-		return "", false
-	}
-	return strings.Trim(strings.TrimSpace(content[start:start+end]), "\n"), true
-}
 
 func checksumSHA256String(value string) string {
 	return checksumSHA256Bytes([]byte(value))

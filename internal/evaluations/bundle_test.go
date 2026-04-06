@@ -112,6 +112,112 @@ func TestNormalizeTranscript(t *testing.T) {
 	}
 }
 
+func TestNormalizeTranscriptFromGenericEvents(t *testing.T) {
+	t.Parallel()
+
+	tempRoot := t.TempDir()
+	workspaceDir := filepath.Join(tempRoot, "workspace")
+	homeDir := filepath.Join(tempRoot, "home")
+	configDir := filepath.Join(tempRoot, "config")
+	stateDir := filepath.Join(tempRoot, "state")
+
+	for _, dir := range []string{workspaceDir, homeDir, filepath.Join(configDir, "clnkr"), stateDir} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("MkdirAll(%q): %v", dir, err)
+		}
+	}
+
+	artifacts := RunArtifacts{
+		// Trajectory and EventLog are intentionally empty — this test
+		// proves normalization works from TranscriptEvents + Commands
+		// without clnku-specific source-format parsing.
+		Trajectory: "",
+		EventLog:   "",
+		TranscriptEvents: []TranscriptEvent{
+			{Index: 0, Kind: "system_prompt", Role: "system", Content: "System prompt at " + workspaceDir},
+			{Index: 1, Kind: "user_instruction", Role: "user", Content: "Create a file in " + workspaceDir},
+			{Index: 2, Kind: "assistant_turn", Role: "assistant", TurnType: "act", Content: "I will create the file in " + workspaceDir},
+			{Index: 3, Kind: "command_result", Role: "user", Content: "command completed"},
+			{Index: 4, Kind: "state_update", Role: "user", Cwd: workspaceDir},
+			{Index: 5, Kind: "clarification", Role: "assistant", TurnType: "clarify", Content: "Need anything else in " + homeDir + "?"},
+			{Index: 6, Kind: "completion", Role: "assistant", TurnType: "done", Content: "Created file in " + workspaceDir},
+		},
+		Commands: []CommandRecord{
+			{
+				Command:  "printf 'hello\\n' > " + filepath.ToSlash(filepath.Join(workspaceDir, "note.txt")),
+				Dir:      workspaceDir,
+				Stdout:   "",
+				Stderr:   "",
+				ExitCode: 0,
+			},
+		},
+		WorkspaceRoot: workspaceDir,
+		HomeDir:       homeDir,
+		ConfigDir:     configDir,
+		StateDir:      stateDir,
+		TempDir:       tempRoot,
+		ExitCode:      0,
+	}
+
+	records, err := NormalizeTranscript(artifacts)
+	if err != nil {
+		t.Fatalf("NormalizeTranscript(): %v", err)
+	}
+
+	var gotKinds []string
+	for _, record := range records {
+		gotKinds = append(gotKinds, record.Kind)
+	}
+	wantKinds := []string{
+		"system_prompt",
+		"user_instruction",
+		"assistant_turn",
+		"command_start",
+		"command_result",
+		"state_update",
+		"clarification",
+		"completion",
+	}
+	if !reflect.DeepEqual(gotKinds, wantKinds) {
+		t.Fatalf("record kinds = %#v, want %#v", gotKinds, wantKinds)
+	}
+
+	// command_start should be synthesized from Commands, with path normalization.
+	if records[3].Kind != "command_start" {
+		t.Fatalf("records[3].Kind = %q, want command_start", records[3].Kind)
+	}
+	if records[3].Command != "printf 'hello\\n' > <WORKDIR>/note.txt" {
+		t.Fatalf("command_start command = %q", records[3].Command)
+	}
+	if records[3].Cwd != "<WORKDIR>" {
+		t.Fatalf("command_start cwd = %q, want <WORKDIR>", records[3].Cwd)
+	}
+
+	// command_result should use structured data from Commands.
+	if records[4].ExitCode != 0 {
+		t.Fatalf("command_result exit_code = %d, want 0", records[4].ExitCode)
+	}
+
+	// state_update cwd should be normalized.
+	if records[5].Cwd != "<WORKDIR>" {
+		t.Fatalf("state_update cwd = %q, want <WORKDIR>", records[5].Cwd)
+	}
+
+	// clarification and completion should have normalized content.
+	if records[6].TurnType != "clarify" {
+		t.Fatalf("clarification turn type = %q, want clarify", records[6].TurnType)
+	}
+	if !strings.Contains(records[6].Content, "<HOME>") {
+		t.Fatalf("clarification content = %q, want <HOME> placeholder", records[6].Content)
+	}
+	if records[7].TurnType != "done" {
+		t.Fatalf("completion turn type = %q, want done", records[7].TurnType)
+	}
+	if !strings.Contains(records[7].Content, "<WORKDIR>") {
+		t.Fatalf("completion content = %q, want <WORKDIR> placeholder", records[7].Content)
+	}
+}
+
 func TestNormalizeOutcome(t *testing.T) {
 	t.Parallel()
 
@@ -156,17 +262,24 @@ func TestWriteTrialBundle(t *testing.T) {
 	if bundle.Root != root {
 		t.Fatalf("bundle root = %q, want %q", bundle.Root, root)
 	}
-	if bundle.SchemaVersion == "" {
-		t.Fatal("bundle schema version is empty")
+	if bundle.SchemaVersion != "2" {
+		t.Fatalf("bundle schema version = %q, want %q", bundle.SchemaVersion, "2")
+	}
+	if bundle.Agent.ID != string(AgentClnku) {
+		t.Fatalf("bundle agent id = %q, want %q", bundle.Agent.ID, AgentClnku)
+	}
+	if bundle.Agent.Version != "0.1.0-test" {
+		t.Fatalf("bundle agent version = %q, want %q", bundle.Agent.Version, "0.1.0-test")
 	}
 	if bundle.Provider.Model != artifacts.ProviderModel {
 		t.Fatalf("bundle provider model = %q, want %q", bundle.Provider.Model, artifacts.ProviderModel)
 	}
 
+	// Schema v2: raw/agent/ dir and raw/commands.jsonl replace raw/transcript.json and raw/events.jsonl.
 	for _, rel := range []string{
 		"bundle.json",
-		"raw/transcript.json",
-		"raw/events.jsonl",
+		"raw/agent",
+		"raw/commands.jsonl",
 		"raw/provider-requests.jsonl",
 		"raw/provider-responses.jsonl",
 		"normalized/transcript.jsonl",
@@ -175,12 +288,15 @@ func TestWriteTrialBundle(t *testing.T) {
 		"outcome/workspace/note.txt",
 	} {
 		path := filepath.Join(root, filepath.FromSlash(rel))
-		info, err := os.Stat(path)
-		if err != nil {
+		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("Stat(%q): %v", path, err)
 		}
-		if info.IsDir() {
-			t.Fatalf("%q is a directory, want file", path)
+	}
+	// Schema v2: old raw artifacts must not exist.
+	for _, rel := range []string{"raw/transcript.json", "raw/events.jsonl"} {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if _, err := os.Stat(path); err == nil {
+			t.Fatalf("old artifact %q still exists under schema v2", rel)
 		}
 	}
 
@@ -193,8 +309,6 @@ func TestWriteTrialBundle(t *testing.T) {
 	}
 
 	for _, rel := range []string{
-		"raw/transcript.json",
-		"raw/events.jsonl",
 		"normalized/transcript.jsonl",
 		"normalized/outcome.json",
 	} {
@@ -318,16 +432,14 @@ func TestLoadBundle(t *testing.T) {
 	if loaded.TrialID != written.TrialID {
 		t.Fatalf("loaded trial id = %q, want %q", loaded.TrialID, written.TrialID)
 	}
-	if loaded.Artifacts.RawTranscript != "raw/transcript.json" {
-		t.Fatalf("raw transcript path = %q, want raw/transcript.json", loaded.Artifacts.RawTranscript)
+	if loaded.Artifacts.RawAgentDir != "raw/agent" {
+		t.Fatalf("raw agent dir = %q, want raw/agent", loaded.Artifacts.RawAgentDir)
 	}
-
-	rawTranscript, err := loaded.ReadRawTranscript()
-	if err != nil {
-		t.Fatalf("ReadRawTranscript(): %v", err)
+	if loaded.Artifacts.RawCommands != "raw/commands.jsonl" {
+		t.Fatalf("raw commands = %q, want raw/commands.jsonl", loaded.Artifacts.RawCommands)
 	}
-	if len(rawTranscript) != 7 {
-		t.Fatalf("raw transcript len = %d, want 7", len(rawTranscript))
+	if loaded.Agent.ID != string(AgentClnku) {
+		t.Fatalf("loaded agent id = %q, want %q", loaded.Agent.ID, AgentClnku)
 	}
 
 	normalizedTranscript, err := loaded.ReadNormalizedTranscript()
@@ -485,6 +597,27 @@ func sampleRunArtifacts(t *testing.T) RunArtifacts {
 		},
 	})
 
+	// Build agent-neutral TranscriptEvents and Commands that normalization
+	// and grading now consume instead of Trajectory/EventLog.
+	transcriptEvents := []TranscriptEvent{
+		{Index: 0, Kind: "system_prompt", Role: "system", Content: messages[0].Content},
+		{Index: 1, Kind: "user_instruction", Role: "user", Content: messages[1].Content},
+		{Index: 2, Kind: "assistant_turn", Role: "assistant", TurnType: "act", Content: messages[2].Content},
+		{Index: 3, Kind: "command_result", Role: "user", Command: command, Content: messages[3].Content},
+		{Index: 4, Kind: "state_update", Role: "user", Cwd: workspaceDir, Content: messages[4].Content},
+		{Index: 5, Kind: "clarification", Role: "assistant", TurnType: "clarify", Content: "Need anything else in " + filepath.ToSlash(homeDir) + "?"},
+		{Index: 6, Kind: "completion", Role: "assistant", TurnType: "done", Content: "Created " + filepath.ToSlash(filepath.Join(workspaceDir, "note.txt"))},
+	}
+	commands := []CommandRecord{
+		{
+			Command:  command,
+			Dir:      workspaceDir,
+			Stdout:   "",
+			Stderr:   "",
+			ExitCode: 0,
+		},
+	}
+
 	startedAt := time.Date(2026, time.March, 31, 10, 0, 0, 0, time.UTC)
 	finishedAt := startedAt.Add(2 * time.Second)
 
@@ -495,13 +628,18 @@ func sampleRunArtifacts(t *testing.T) RunArtifacts {
 		SuiteTaskIndex:  0,
 		TrialAttempt:    0,
 		Mode:            ModeMockProvider,
+		Agent:           AgentClnku,
+		AgentVersion:    "0.1.0-test",
+		AgentCommand:    []string{"clnku", "--eval"},
 		ProviderModel:   "test-model",
 		ProviderBaseURL: "http://127.0.0.1:9999",
 		StartedAt:       startedAt,
 		FinishedAt:      finishedAt,
-		SystemPrompt:    messages[0].Content,
-		Trajectory:      string(trajectoryBytes),
-		EventLog:        eventLog,
+		SystemPrompt:     messages[0].Content,
+		Trajectory:       string(trajectoryBytes),
+		EventLog:         eventLog,
+		TranscriptEvents: transcriptEvents,
+		Commands:         commands,
 		ProviderRequests: []CapturedRequest{
 			{
 				Model:      "test-model",

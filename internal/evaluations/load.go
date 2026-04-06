@@ -14,6 +14,7 @@ type suiteJSON struct {
 	ID            *string            `json:"id"`
 	Description   *string            `json:"description"`
 	Mode          *string            `json:"mode"`
+	Agent         *string            `json:"agent"`
 	TrialsPerTask *int               `json:"trials_per_task"`
 	FailurePolicy *failurePolicyJSON `json:"failure_policy"`
 	Tasks         []string           `json:"tasks"`
@@ -33,6 +34,7 @@ type taskJSON struct {
 	FullSend           *bool       `json:"full_send"`
 	SeedTranscriptFile *string     `json:"seed_transcript_file"`
 	Mode               *string     `json:"mode"`
+	Agent              *string     `json:"agent"`
 	Graders            *graderJSON `json:"graders"`
 }
 
@@ -191,10 +193,20 @@ func validateSuiteJSON(path string, raw suiteJSON) (Suite, error) {
 		return Suite{}, err
 	}
 
+	var agent Agent
+	if raw.Agent != nil {
+		a, err := optionalAgent(path, "agent", raw.Agent)
+		if err != nil {
+			return Suite{}, err
+		}
+		agent = a
+	}
+
 	return Suite{
 		ID:            id,
 		Description:   description,
 		Mode:          mode,
+		Agent:         agent,
 		TrialsPerTask: trialsPerTask,
 		Tasks:         append([]string(nil), raw.Tasks...),
 		FailurePolicy: failurePolicy,
@@ -270,6 +282,13 @@ func validateTaskJSON(path string, raw taskJSON) (Task, error) {
 			return Task{}, err
 		}
 		task.SeedTranscriptFile = seedTranscriptFile
+	}
+	if raw.Agent != nil {
+		agent, err := optionalAgent(path, "agent", raw.Agent)
+		if err != nil {
+			return Task{}, err
+		}
+		task.Agent = agent
 	}
 	if raw.Mode != nil {
 		mode, err := requiredMode(path, "mode", raw.Mode)
@@ -486,6 +505,23 @@ func requiredMode(path, field string, value *string) (Mode, error) {
 		return mode, nil
 	default:
 		return "", fmt.Errorf("%s: field %q must be %q or %q, got %q", path, field, ModeMockProvider, ModeLiveProvider, mode)
+	}
+}
+
+func optionalAgent(path, field string, value *string) (Agent, error) {
+	if value == nil {
+		return "", nil
+	}
+	str := strings.TrimSpace(*value)
+	if str == "" {
+		return "", fmt.Errorf("%s: field %q must be non-empty when present", path, field)
+	}
+	agent := Agent(str)
+	switch agent {
+	case AgentClnku, AgentClaude:
+		return agent, nil
+	default:
+		return "", fmt.Errorf("%s: field %q must be %q or %q, got %q", path, field, AgentClnku, AgentClaude, agent)
 	}
 }
 

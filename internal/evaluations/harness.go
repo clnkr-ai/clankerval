@@ -14,15 +14,17 @@ import (
 	"time"
 )
 
-// Harness builds clnku once (or locates a pre-installed binary) and runs
-// evaluation trials against it.
+// Harness coordinates evaluation trials and resolves the clnku binary only when
+// a clnku trial actually needs it.
 type Harness struct {
-	tempRoot   string
-	trialsDir  string
-	repoRoot   string
-	evalsDir   string
-	buildDir   string
-	binaryPath string
+	tempRoot      string
+	trialsDir     string
+	repoRoot      string
+	evalsDir      string
+	buildDir      string
+	binaryPath    string
+	adapter       AgentAdapter // clnku adapter (default)
+	claudeAdapter AgentAdapter // claude adapter, lazily validated
 }
 
 // HarnessOption configures optional Harness behavior.
@@ -58,6 +60,9 @@ type RunArtifacts struct {
 	SuiteTaskIndex        int
 	TrialAttempt          int
 	Mode                  Mode
+	Agent                 Agent
+	AgentVersion          string
+	AgentCommand          []string
 	ProviderModel         string
 	ProviderBaseURL       string
 	StartedAt             time.Time
@@ -65,6 +70,9 @@ type RunArtifacts struct {
 	SystemPrompt          string
 	Trajectory            string
 	EventLog              string
+	TranscriptEvents      []TranscriptEvent
+	Commands              []CommandRecord
+	RawAgentArtifacts     []RawAgentArtifact
 	ProviderRequests      []CapturedRequest
 	ProviderResponses     []string
 	Workspace             map[string]string
@@ -80,8 +88,8 @@ type RunArtifacts struct {
 	GitDiff               string
 }
 
-// NewHarness builds clnku once for reuse across trials.
-// Pass WithBinary to skip building from source and use a pre-installed binary.
+// NewHarness prepares a reusable harness for evaluation trials.
+// Pass WithBinary to force a specific clnku binary path.
 func NewHarness(ctx context.Context, repoRoot string, opts ...HarnessOption) (*Harness, error) {
 	var o harnessOptions
 	for _, opt := range opts {
@@ -106,30 +114,10 @@ func NewHarness(ctx context.Context, repoRoot string, opts ...HarnessOption) (*H
 	}
 
 	if o.binaryPath != "" {
-		// Explicit binary path provided.
 		h.binaryPath = o.binaryPath
-	} else if repoRoot == "" {
-		// No repo root — resolve from PATH.
-		resolved, err := exec.LookPath("clnku")
-		if err != nil {
-			_ = os.RemoveAll(tempRoot)
-			return nil, fmt.Errorf("resolve clnku binary: %w", err)
-		}
-		h.binaryPath = resolved
-	} else {
-		// Build from source.
-		buildDir := filepath.Join(tempRoot, "build")
-		if err := os.MkdirAll(buildDir, 0o755); err != nil {
-			_ = os.RemoveAll(tempRoot)
-			return nil, fmt.Errorf("create harness build dir: %w", err)
-		}
-		h.buildDir = buildDir
-		h.binaryPath = filepath.Join(buildDir, "clnku")
-		if err := h.buildBinary(ctx); err != nil {
-			_ = os.RemoveAll(tempRoot)
-			return nil, err
-		}
 	}
+
+	h.adapter = &clnkuAdapter{}
 
 	return h, nil
 }
@@ -178,6 +166,12 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 		return RunArtifacts{}, err
 	}
 	artifacts.Mode = mode
+	artifacts.Agent = EffectiveAgent(task.Agent, suite.Agent, cfg.Agent)
+	if artifacts.Agent == AgentClnku {
+		if err := h.ensureClnkuBinary(ctx); err != nil {
+			return RunArtifacts{}, fmt.Errorf("ensure clnku binary: %w", err)
+		}
+	}
 
 	inPlace := task.WorkingDirectory == "."
 	var workspaceDir string
@@ -197,9 +191,6 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 	if !inPlace {
 		if err := copyTreeOptional(filepath.Join(taskRoot, "input", "workspace"), workspaceDir); err != nil {
 			return RunArtifacts{}, fmt.Errorf("copy workspace input: %w", err)
-		}
-		if err := copyProjectAgents(filepath.Join(taskRoot, "input", "project"), workspaceDir); err != nil {
-			return RunArtifacts{}, fmt.Errorf("copy project AGENTS: %w", err)
 		}
 	}
 	if err := copyTreeOptional(filepath.Join(taskRoot, "input", "home"), homeDir); err != nil {
@@ -244,61 +235,37 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 		"TZ=UTC",
 		"PATH=" + os.Getenv("PATH"),
 	}
-
-	systemPrompt, stderrOut, exitCode, err := runCommand(ctx, workspaceDir, env, h.binaryPath, "--dump-system-prompt")
-	if err != nil {
-		return RunArtifacts{}, fmt.Errorf("dump system prompt: %w", err)
-	}
-	if exitCode != 0 {
-		return RunArtifacts{}, fmt.Errorf("dump system prompt exit code %d: %s", exitCode, strings.TrimSpace(stderrOut))
-	}
-	artifacts.SystemPrompt = systemPrompt
-
-	instructionBytes, err := os.ReadFile(filepath.Join(taskRoot, task.InstructionFile))
-	if err != nil {
-		return RunArtifacts{}, fmt.Errorf("read instruction file: %w", err)
+	if artifacts.Agent == AgentClaude {
+		env = appendEnvFromHostIfSet(env, "ANTHROPIC_API_KEY")
 	}
 
-	eventLogPath, err := createTempFilePath(trialRoot, "events-*.jsonl")
-	if err != nil {
-		return RunArtifacts{}, fmt.Errorf("create event log path: %w", err)
-	}
-	trajectoryPath, err := createTempFilePath(trialRoot, "messages-*.json")
-	if err != nil {
-		return RunArtifacts{}, fmt.Errorf("create trajectory path: %w", err)
-	}
-
-	args := []string{
-		"-p", strings.TrimSpace(string(instructionBytes)),
-		"--event-log", eventLogPath,
-		"--trajectory", trajectoryPath,
-		"--max-steps", fmt.Sprintf("%d", task.StepLimit),
-	}
-	if task.FullSend {
-		args = append(args, "--full-send")
-	}
-	if task.SeedTranscriptFile != "" {
-		seedPath, err := writeSeedMessages(trialRoot, filepath.Join(taskRoot, task.SeedTranscriptFile), trialRoot, workspaceDir, homeDir, configDir, stateDir)
-		if err != nil {
-			return RunArtifacts{}, fmt.Errorf("prepare seed transcript: %w", err)
-		}
-		args = append(args, "--load-messages", seedPath)
+	adapterReq := AdapterRequest{
+		TaskRoot:     taskRoot,
+		Task:         task,
+		WorkspaceDir: workspaceDir,
+		HomeDir:      homeDir,
+		ConfigDir:    configDir,
+		StateDir:     stateDir,
+		TrialRoot:    trialRoot,
+		BinaryPath:   h.binaryPath,
+		Env:          env,
 	}
 
-	_, _, exitCode, err = runCommand(ctx, workspaceDir, env, h.binaryPath, args...)
+	adapter := h.adapterForAgent(artifacts.Agent)
+	adapterResult, err := adapter.Run(ctx, adapterReq)
 	if err != nil {
-		return RunArtifacts{}, fmt.Errorf("run task: %w", err)
+		return RunArtifacts{}, fmt.Errorf("run adapter: %w", err)
 	}
-	artifacts.ExitCode = exitCode
 
-	trajectory, err := os.ReadFile(trajectoryPath)
-	if err != nil {
-		return RunArtifacts{}, fmt.Errorf("read trajectory: %w", err)
-	}
-	eventLog, err := os.ReadFile(eventLogPath)
-	if err != nil {
-		return RunArtifacts{}, fmt.Errorf("read event log: %w", err)
-	}
+	artifacts.ExitCode = adapterResult.ExitCode
+	artifacts.AgentVersion = adapterResult.AgentVersion
+	artifacts.AgentCommand = adapterResult.AgentCommand
+	artifacts.SystemPrompt = adapterResult.SystemPrompt
+	artifacts.Trajectory = adapterResult.Trajectory
+	artifacts.EventLog = adapterResult.EventLog
+	artifacts.TranscriptEvents = adapterResult.TranscriptEvents
+	artifacts.Commands = adapterResult.Commands
+	artifacts.RawAgentArtifacts = adapterResult.RawAgentArtifacts
 
 	if inPlace {
 		// Capture git diff against the recorded base ref.
@@ -327,8 +294,6 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 		artifacts.Workspace = workspace
 	}
 
-	artifacts.Trajectory = string(trajectory)
-	artifacts.EventLog = string(eventLog)
 	artifacts.WorkspaceRoot = workspaceDir
 	artifacts.HomeDir = homeDir
 	artifacts.ConfigDir = configDir
@@ -349,11 +314,53 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 	return artifacts, nil
 }
 
+// adapterForAgent returns the appropriate adapter for the given agent.
+// Claude tasks use the dedicated claudeAdapter; everything else uses the
+// default clnku adapter, keeping existing clnku tests fully stable.
+func (h *Harness) adapterForAgent(agent Agent) AgentAdapter {
+	if agent == AgentClaude {
+		if h.claudeAdapter == nil {
+			h.claudeAdapter = &claudeAdapter{}
+		}
+		return h.claudeAdapter
+	}
+	return h.adapter
+}
+
 func resolveTaskRoot(repoRoot, evalsDir, suiteID, taskID string) string {
 	if evalsDir != "" {
 		return filepath.Join(evalsDir, "suites", suiteID, "tasks", taskID)
 	}
 	return filepath.Join(repoRoot, "evaluations", "suites", suiteID, "tasks", taskID)
+}
+
+func (h *Harness) ensureClnkuBinary(ctx context.Context) error {
+	if h.binaryPath != "" {
+		return nil
+	}
+
+	if h.repoRoot != "" && repoHasClnkuSourceTree(h.repoRoot) {
+		if h.buildDir == "" {
+			buildDir := filepath.Join(h.tempRoot, "build")
+			if err := os.MkdirAll(buildDir, 0o755); err != nil {
+				return fmt.Errorf("create harness build dir: %w", err)
+			}
+			h.buildDir = buildDir
+		}
+		h.binaryPath = filepath.Join(h.buildDir, "clnku")
+		if err := h.buildBinary(ctx); err != nil {
+			h.binaryPath = ""
+			return err
+		}
+		return nil
+	}
+
+	resolved, err := exec.LookPath("clnku")
+	if err != nil {
+		return fmt.Errorf("resolve clnku binary: %w", err)
+	}
+	h.binaryPath = resolved
+	return nil
 }
 
 func (h *Harness) buildBinary(ctx context.Context) error {
@@ -427,6 +434,22 @@ func runCommand(ctx context.Context, cwd string, env []string, binary string, ar
 		return stdout.String(), stderr.String(), exitErr.ExitCode(), nil
 	}
 	return stdout.String(), stderr.String(), 0, fmt.Errorf("run %q: %w", strings.Join(append([]string{binary}, args...), " "), err)
+}
+
+func appendEnvFromHostIfSet(env []string, key string) []string {
+	value, ok := os.LookupEnv(key)
+	if !ok || value == "" {
+		return env
+	}
+	return append(env, key+"="+value)
+}
+
+func repoHasClnkuSourceTree(repoRoot string) bool {
+	if strings.TrimSpace(repoRoot) == "" {
+		return false
+	}
+	info, err := os.Stat(filepath.Join(repoRoot, "cmd", "clnku"))
+	return err == nil && info.IsDir()
 }
 
 func createTempFilePath(dir, pattern string) (string, error) {

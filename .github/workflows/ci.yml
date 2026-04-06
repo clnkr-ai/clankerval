@@ -69,8 +69,9 @@ jobs:
         run: dpkg-buildpackage -us -uc
 
       - name: Run lintian
-        run: |
-          lintian --profile debian --fail-on error ../*.changes
+        env:
+          DEB_VENDOR: Debian
+        run: lintian --fail-on error ../*.changes
 
       - name: Run autopkgtest
         run: sudo autopkgtest ../*_"$(dpkg-architecture -qDEB_HOST_ARCH)".changes -- null

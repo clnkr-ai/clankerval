@@ -52,6 +52,12 @@ func TestRunSuite(t *testing.T) {
 			t.Fatalf("trial count = %d, want 1", len(report.Tasks[0].Trials))
 		}
 
+		// Agent identity must propagate through the end-to-end path even when
+		// no agent is set explicitly — EffectiveAgent defaults to clnku.
+		if report.Tasks[0].Trials[0].Agent.ID != string(AgentClnku) {
+			t.Fatalf("trial agent id = %q, want %q", report.Tasks[0].Trials[0].Agent.ID, AgentClnku)
+		}
+
 		bundlePath := report.Tasks[0].Trials[0].BundlePath
 		if bundlePath == "" {
 			t.Fatal("bundle path is empty")
@@ -185,6 +191,62 @@ func TestRunSuite(t *testing.T) {
 		}
 		if len(report.Tasks) != 1 || report.Tasks[0].TaskID != "task-fail" {
 			t.Fatalf("tasks = %#v, want only task-fail", report.Tasks)
+		}
+	})
+
+	t.Run("agent identity flows through trial ID bundle path and progress", func(t *testing.T) {
+		cleanupGeneratedRunOutput(t, repoRoot)
+		suiteID := writeTempRunSuite(t, repoRoot, runSuiteSpec{
+			trialsPerTask: 1,
+			failurePolicy: FailurePolicy{
+				StopOnFirstFailure: true,
+				MaxFailedTasks:     1,
+			},
+			tasks: []runSuiteTaskSpec{{id: "agent-check", expectedNote: "hello\n"}},
+		})
+
+		var progressMessages []string
+		report, err := RunSuite(
+			context.Background(),
+			repoRoot,
+			suiteID,
+			RunConfig{Mode: ModeMockProvider},
+			WithSuiteBinary(mustClnkuPath(t)),
+			WithProgress(func(msg string) {
+				progressMessages = append(progressMessages, msg)
+			}),
+		)
+		if err != nil {
+			t.Fatalf("RunSuite(): %v", err)
+		}
+		if len(report.Tasks) != 1 || len(report.Tasks[0].Trials) != 1 {
+			t.Fatalf("expected 1 task with 1 trial, got %d tasks", len(report.Tasks))
+		}
+
+		trial := report.Tasks[0].Trials[0]
+		agentID := trial.Agent.ID
+		if agentID == "" {
+			t.Fatal("trial agent id is empty")
+		}
+
+		// Canonical trial ID must include the resolved agent.
+		if !strings.Contains(trial.TrialID, agentID) {
+			t.Fatalf("trial id %q does not contain agent %q", trial.TrialID, agentID)
+		}
+		// Bundle path must include the resolved agent.
+		if !strings.Contains(trial.BundlePath, agentID) {
+			t.Fatalf("bundle path %q does not contain agent %q", trial.BundlePath, agentID)
+		}
+		// Progress output must mention the agent.
+		found := false
+		for _, msg := range progressMessages {
+			if strings.Contains(msg, agentID) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("no progress message contains agent %q: %v", agentID, progressMessages)
 		}
 	})
 

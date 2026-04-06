@@ -10,11 +10,22 @@ const (
 	ModeLiveProvider Mode = "live-provider"
 )
 
+// Agent selects which agent CLI is under test.
+type Agent string
+
+const (
+	// AgentClnku runs the clnku agent.
+	AgentClnku Agent = "clnku"
+	// AgentClaude runs the Claude Code agent.
+	AgentClaude Agent = "claude"
+)
+
 // Suite describes an ordered collection of evaluation tasks.
 type Suite struct {
 	ID            string
 	Description   string
 	Mode          Mode
+	Agent         Agent
 	TrialsPerTask int
 	Tasks         []string
 	FailurePolicy FailurePolicy
@@ -36,6 +47,7 @@ type Task struct {
 	FullSend           bool
 	SeedTranscriptFile string
 	Mode               Mode
+	Agent              Agent
 	Graders            GraderConfig
 }
 

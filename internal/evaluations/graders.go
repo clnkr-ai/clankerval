@@ -102,19 +102,15 @@ func GradeOutcomeDiff(task Task, artifacts RunArtifacts) (GraderResult, error) {
 }
 
 // GradeTranscriptCommandTrace compares the command lifecycle trace against task configuration.
+// It consumes only RunArtifacts.Commands (agent-neutral) rather than parsing the event log.
 func GradeTranscriptCommandTrace(task Task, artifacts RunArtifacts) (GraderResult, error) {
-	_, dones, err := parseCommandLifecycleEvents(artifacts.EventLog)
-	if err != nil {
-		return GraderResult{}, fmt.Errorf("grade transcript command trace: %w", err)
+	commands := make([]string, 0, len(artifacts.Commands))
+	for _, cmd := range artifacts.Commands {
+		commands = append(commands, cmd.Command)
 	}
-
-	commands := make([]string, 0, len(dones))
-	for _, done := range dones {
-		commands = append(commands, done.Command)
-	}
-	exitCodes := make([]int, 0, len(dones))
-	for _, done := range dones {
-		exitCodes = append(exitCodes, done.ExitCode)
+	exitCodes := make([]int, 0, len(artifacts.Commands))
+	for _, cmd := range artifacts.Commands {
+		exitCodes = append(exitCodes, cmd.ExitCode)
 	}
 
 	evidence := TranscriptCommandTraceEvidence{

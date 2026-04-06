@@ -9,11 +9,9 @@ import (
 	"runtime/debug"
 	"sort"
 	"strings"
-
-	"github.com/clnkr-ai/clankerval/internal/protocol"
 )
 
-const bundleSchemaVersion = "1"
+const bundleSchemaVersion = "2"
 const bundleTimeLayout = "2006-01-02T15:04:05.999999999Z07:00"
 
 // Bundle is the canonical per-trial bundle metadata.
@@ -27,6 +25,7 @@ type Bundle struct {
 	SuiteTaskIndex        int               `json:"suite_task_index"`
 	TrialAttempt          int               `json:"trial_attempt"`
 	Mode                  Mode              `json:"mode"`
+	Agent                 BundleAgent       `json:"agent"`
 	Provider              BundleProvider    `json:"provider"`
 	StartedAt             string            `json:"started_at"`
 	FinishedAt            string            `json:"finished_at"`
@@ -34,6 +33,13 @@ type Bundle struct {
 	FailedRequiredGraders []GraderResult    `json:"failed_required_graders,omitempty"`
 	Artifacts             BundleArtifacts   `json:"artifacts"`
 	Checksums             map[string]string `json:"checksums"`
+}
+
+// BundleAgent stores the agent identity for a trial.
+type BundleAgent struct {
+	ID      string   `json:"id"`
+	Version string   `json:"version,omitempty"`
+	Command []string `json:"command,omitempty"`
 }
 
 // BundleProvider stores the configured endpoint and model actually used for a trial.
@@ -44,8 +50,8 @@ type BundleProvider struct {
 
 // BundleArtifacts stores bundle-relative artifact paths.
 type BundleArtifacts struct {
-	RawTranscript        string `json:"raw_transcript"`
-	RawEvents            string `json:"raw_events"`
+	RawAgentDir          string `json:"raw_agent_dir"`
+	RawCommands          string `json:"raw_commands"`
 	RawProviderRequests  string `json:"raw_provider_requests"`
 	RawProviderResponses string `json:"raw_provider_responses"`
 	NormalizedTranscript string `json:"normalized_transcript"`
@@ -84,8 +90,8 @@ func WriteTrialBundle(root string, artifacts RunArtifacts, graderResults []Grade
 	}
 
 	artifactPaths := BundleArtifacts{
-		RawTranscript:        "raw/transcript.json",
-		RawEvents:            "raw/events.jsonl",
+		RawAgentDir:          "raw/agent",
+		RawCommands:          "raw/commands.jsonl",
 		RawProviderRequests:  "raw/provider-requests.jsonl",
 		RawProviderResponses: "raw/provider-responses.jsonl",
 		NormalizedTranscript: "normalized/transcript.jsonl",
@@ -98,11 +104,25 @@ func WriteTrialBundle(root string, artifacts RunArtifacts, graderResults []Grade
 	}
 
 	writtenChecksums := map[string]string{}
-	if err := writeFile(root, artifactPaths.RawTranscript, []byte(artifacts.Trajectory), writtenChecksums, true); err != nil {
-		return Bundle{}, err
+
+	// Write raw/agent/ directory with native agent artifacts.
+	agentDirPath, err := bundleArtifactPath(root, artifactPaths.RawAgentDir)
+	if err != nil {
+		return Bundle{}, fmt.Errorf("resolve raw agent dir: %w", err)
 	}
-	if err := writeFile(root, artifactPaths.RawEvents, []byte(artifacts.EventLog), writtenChecksums, true); err != nil {
-		return Bundle{}, err
+	if err := os.MkdirAll(agentDirPath, 0o755); err != nil {
+		return Bundle{}, fmt.Errorf("create raw agent dir: %w", err)
+	}
+	for _, artifact := range artifacts.RawAgentArtifacts {
+		artifactRel := filepath.ToSlash(filepath.Join(artifactPaths.RawAgentDir, artifact.Name))
+		if err := writeFile(root, artifactRel, artifact.Content, nil, false); err != nil {
+			return Bundle{}, fmt.Errorf("write raw agent artifact %q: %w", artifact.Name, err)
+		}
+	}
+
+	// Write raw/commands.jsonl from generic command records.
+	if err := writeJSONL(root, artifactPaths.RawCommands, artifacts.Commands, nil, false); err != nil {
+		return Bundle{}, fmt.Errorf("write raw commands: %w", err)
 	}
 
 	requestLines := make([]string, 0, len(artifacts.ProviderRequests))
@@ -167,6 +187,11 @@ func WriteTrialBundle(root string, artifacts RunArtifacts, graderResults []Grade
 		SuiteTaskIndex:  artifacts.SuiteTaskIndex,
 		TrialAttempt:    artifacts.TrialAttempt,
 		Mode:            artifacts.Mode,
+		Agent: BundleAgent{
+			ID:      string(artifacts.Agent),
+			Version: artifacts.AgentVersion,
+			Command: artifacts.AgentCommand,
+		},
 		Provider: BundleProvider{
 			BaseURL: artifacts.ProviderBaseURL,
 			Model:   artifacts.ProviderModel,
@@ -193,8 +218,8 @@ func LoadBundle(root string) (Bundle, error) {
 	bundle.Root = root
 
 	requiredPaths := []string{
-		bundle.Artifacts.RawTranscript,
-		bundle.Artifacts.RawEvents,
+		bundle.Artifacts.RawAgentDir,
+		bundle.Artifacts.RawCommands,
 		bundle.Artifacts.RawProviderRequests,
 		bundle.Artifacts.RawProviderResponses,
 		bundle.Artifacts.NormalizedTranscript,
@@ -214,19 +239,6 @@ func LoadBundle(root string) (Bundle, error) {
 	}
 
 	return bundle, nil
-}
-
-// ReadRawTranscript loads the raw transcript messages array on demand.
-func (b Bundle) ReadRawTranscript() ([]protocol.Message, error) {
-	data, err := b.readArtifactFile(b.Artifacts.RawTranscript)
-	if err != nil {
-		return nil, fmt.Errorf("read raw transcript: %w", err)
-	}
-	var messages []protocol.Message
-	if err := json.Unmarshal(data, &messages); err != nil {
-		return nil, fmt.Errorf("read raw transcript decode: %w", err)
-	}
-	return messages, nil
 }
 
 // ReadNormalizedTranscript loads normalized transcript records on demand.
@@ -351,6 +363,14 @@ func writeJSONL(root, rel string, records any, checksums map[string]string, chec
 			data, err := json.Marshal(record)
 			if err != nil {
 				return fmt.Errorf("marshal grader record: %w", err)
+			}
+			lines = append(lines, string(data))
+		}
+	case []CommandRecord:
+		for _, record := range records {
+			data, err := json.Marshal(record)
+			if err != nil {
+				return fmt.Errorf("marshal command record: %w", err)
 			}
 			lines = append(lines, string(data))
 		}
