@@ -13,7 +13,7 @@ clankerval - evaluation runner for checked-in agent suites
 
 **clankerval** loads checked-in evaluation suites, runs trial workspaces against an agent CLI, grades the result, and writes per-trial bundles plus run-level reports.
 
-Today the runner supports two agent adapters: **clnku** and Claude Code. The canonical command name is **clankerval**. **clnkeval** remains supported as a compatibility alias, and both names accept the same flags.
+Today the runner supports two agent adapters: **clnku** and Claude Code.
 
 The two top-level commands are **run** and **init**.
 
@@ -154,13 +154,6 @@ Run the checked-in manual Claude smoke suite:
 ```bash
 CLANKERVAL_CLAUDE_LIVE_SMOKE=1 \
 go test ./internal/evaluations -run TestClaudeLiveSmokeSuite -count=1
-```
-
-Compatibility alias:
-
-```bash
-clnkeval run --suite default --binary /path/to/clnku
-clnkeval init
 ```
 
 # EXIT STATUS

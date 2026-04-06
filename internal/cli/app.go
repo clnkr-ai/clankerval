@@ -12,8 +12,7 @@ import (
 	"github.com/clnkr-ai/clankerval/internal/evaluations"
 )
 
-// Run implements the top-level CLI contract for both the canonical and
-// compatibility command names.
+// Run implements the top-level CLI contract.
 func Run(name, version string, args []string, cwd string, stdout, stderr io.Writer, getenv func(string) string) int {
 	if stdout == nil {
 		stdout = io.Discard
@@ -66,7 +65,7 @@ Flags:
   --version   Print version
 
 Run '%s <command> --help' for details on a specific command.
-%s`, name, name, name, compatibilityNote(name))
+`, name, name, name)
 }
 
 func runSuite(name string, args []string, cwd string, stdout, stderr io.Writer, getenv func(string) string) int {
@@ -76,9 +75,8 @@ func runSuite(name string, args []string, cwd string, stdout, stderr io.Writer, 
 		fmt.Fprintf(stderr, `Usage: %s run [flags]
 
 Run an evaluation suite against the current directory.
-%s
 Flags:
-`, name, compatibilityNote(name))
+`, name)
 		flags.PrintDefaults()
 	}
 	suiteID := flags.String("suite", "default", "suite id to run")
@@ -166,8 +164,7 @@ func runInit(name string, args []string, cwd string, stdout, stderr io.Writer) i
 		fmt.Fprintf(stderr, `Usage: %s init
 
 Scaffold an evaluations/ directory with a default suite and example task.
-The directory must not already exist.
-%s`, name, compatibilityNote(name))
+The directory must not already exist.`, name)
 	}
 	if err := flags.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -197,13 +194,6 @@ The directory must not already exist.
 
 	_, _ = fmt.Fprintf(stdout, "initialized evaluations/ with default suite and example task\n")
 	return 0
-}
-
-func compatibilityNote(name string) string {
-	if name != "clnkeval" {
-		return ""
-	}
-	return "\nNote: clankerval is the canonical command name. clnkeval remains supported for compatibility.\n"
 }
 
 func resolvePathFromCWD(cwd, path string) (string, error) {

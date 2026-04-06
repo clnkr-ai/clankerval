@@ -351,33 +351,28 @@ func TestRun(t *testing.T) {
 	})
 }
 
-func TestTopLevelContractByInvokedName(t *testing.T) {
+func TestTopLevelContract(t *testing.T) {
 	cases := []struct {
 		name       string
-		invokedAs  string
 		args       []string
 		wantExit   int
 		wantStdout string
 		wantStderr string
 	}{
-		{"help canonical long", "clankerval", []string{"--help"}, 0, "clankerval <command> [flags]", ""},
-		{"help canonical short", "clankerval", []string{"-h"}, 0, "clankerval <command> [flags]", ""},
-		{"help compat long", "clnkeval", []string{"--help"}, 0, "clnkeval <command> [flags]", ""},
-		{"help compat word", "clnkeval", []string{"help"}, 0, "clnkeval <command> [flags]", ""},
-		{"version canonical long", "clankerval", []string{"--version"}, 0, "clankerval ", ""},
-		{"version canonical short", "clankerval", []string{"-V"}, 0, "clankerval ", ""},
-		{"version compat long", "clnkeval", []string{"--version"}, 0, "clnkeval ", ""},
-		{"version compat word", "clnkeval", []string{"version"}, 0, "clnkeval ", ""},
-		{"no args canonical", "clankerval", nil, 1, "", "clankerval <command> [flags]"},
-		{"no args compat", "clnkeval", nil, 1, "", "clnkeval <command> [flags]"},
-		{"unknown canonical", "clankerval", []string{"bogus"}, 1, "", "unknown command"},
-		{"unknown compat", "clnkeval", []string{"bogus"}, 1, "", "unknown command"},
+		{"help long", []string{"--help"}, 0, "clankerval <command> [flags]", ""},
+		{"help short", []string{"-h"}, 0, "clankerval <command> [flags]", ""},
+		{"help word", []string{"help"}, 0, "clankerval <command> [flags]", ""},
+		{"version long", []string{"--version"}, 0, "clankerval ", ""},
+		{"version short", []string{"-V"}, 0, "clankerval ", ""},
+		{"version word", []string{"version"}, 0, "clankerval ", ""},
+		{"no args", nil, 1, "", "clankerval <command> [flags]"},
+		{"unknown", []string{"bogus"}, 1, "", "unknown command"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			stdout := &bytes.Buffer{}
 			stderr := &bytes.Buffer{}
-			exit := Run(tc.invokedAs, "dev", tc.args, ".", stdout, stderr, func(string) string { return "" })
+			exit := Run("clankerval", "dev", tc.args, ".", stdout, stderr, func(string) string { return "" })
 			if exit != tc.wantExit {
 				t.Fatalf("exit = %d, want %d", exit, tc.wantExit)
 			}
@@ -393,34 +388,26 @@ func TestTopLevelContractByInvokedName(t *testing.T) {
 			if tc.wantStderr == "" && stderr.Len() != 0 {
 				t.Fatalf("stderr = %q, want empty stderr", stderr.String())
 			}
-			if tc.invokedAs == "clnkeval" && strings.Contains(strings.Join(tc.args, " "), "help") && !strings.Contains(stdout.String(), "clankerval is the canonical command name") {
-				t.Fatalf("stdout = %q, want compatibility note", stdout.String())
-			}
 		})
 	}
 }
 
-func TestSubcommandHelpStreamsAndAliases(t *testing.T) {
-	for _, invokedAs := range []string{"clankerval", "clnkeval"} {
-		for _, args := range [][]string{{"run", "--help"}, {"run", "-h"}, {"init", "--help"}, {"init", "-h"}} {
-			t.Run(invokedAs+" "+strings.Join(args, " "), func(t *testing.T) {
-				stdout := &bytes.Buffer{}
-				stderr := &bytes.Buffer{}
-				exit := Run(invokedAs, "dev", args, ".", stdout, stderr, func(string) string { return "" })
-				if exit != 0 {
-					t.Fatalf("exit = %d, want 0", exit)
-				}
-				if stdout.Len() != 0 {
-					t.Fatalf("stdout = %q, want empty stdout", stdout.String())
-				}
-				if !strings.Contains(stderr.String(), "Usage: "+invokedAs+" "+args[0]) {
-					t.Fatalf("stderr = %q, want subcommand usage for %s", stderr.String(), invokedAs)
-				}
-				if invokedAs == "clnkeval" && !strings.Contains(stderr.String(), "clankerval is the canonical command name") {
-					t.Fatalf("stderr = %q, want compatibility note", stderr.String())
-				}
-			})
-		}
+func TestSubcommandHelpStreamsToStderr(t *testing.T) {
+	for _, args := range [][]string{{"run", "--help"}, {"run", "-h"}, {"init", "--help"}, {"init", "-h"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			stdout := &bytes.Buffer{}
+			stderr := &bytes.Buffer{}
+			exit := Run("clankerval", "dev", args, ".", stdout, stderr, func(string) string { return "" })
+			if exit != 0 {
+				t.Fatalf("exit = %d, want 0", exit)
+			}
+			if stdout.Len() != 0 {
+				t.Fatalf("stdout = %q, want empty stdout", stdout.String())
+			}
+			if !strings.Contains(stderr.String(), "Usage: clankerval "+args[0]) {
+				t.Fatalf("stderr = %q, want subcommand usage", stderr.String())
+			}
+		})
 	}
 }
 

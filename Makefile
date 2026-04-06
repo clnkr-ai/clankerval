@@ -6,7 +6,6 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 
 build:
 	go build -trimpath -ldflags '$(LDFLAGS)' -o clankerval ./cmd/clankerval
-	ln -sf clankerval clnkeval
 
 test:
 	go test -race ./... -v
@@ -27,5 +26,5 @@ _check-man:
 	echo "man page is up-to-date"
 
 clean:
-	rm -f clankerval clnkeval
+	rm -f clankerval
 	rm -rf .tmp

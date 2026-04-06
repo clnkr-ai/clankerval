@@ -13,7 +13,7 @@ clankerval \- evaluation runner for checked-in agent suites
 \fBclankerval\fP loads checked-in evaluation suites, runs trial workspaces against an agent CLI, grades the result, and writes per-trial bundles plus run-level reports.
 
 .PP
-Today the runner supports two agent adapters: \fBclnku\fP and Claude Code. The canonical command name is \fBclankerval\fP\&. \fBclnkeval\fP remains supported as a compatibility alias, and both names accept the same flags.
+Today the runner supports two agent adapters: \fBclnku\fP and Claude Code.
 
 .PP
 The two top-level commands are \fBrun\fP and \fBinit\fP\&.
@@ -181,14 +181,6 @@ Run the checked-in manual Claude smoke suite:
 .EX
 CLANKERVAL_CLAUDE_LIVE_SMOKE=1 \\
 go test ./internal/evaluations -run TestClaudeLiveSmokeSuite -count=1
-.EE
-
-.PP
-Compatibility alias:
-
-.EX
-clnkeval run --suite default --binary /path/to/clnku
-clnkeval init
 .EE
 
 
