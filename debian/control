@@ -17,7 +17,6 @@ Breaks: clnkr (<< 1.5.0)
 Replaces: clnkr (<< 1.5.0)
 Description: evaluation runner for clnkr-compatible agents
  clankerval is the standalone evaluation runner extracted from clnkr.
- It runs project-owned evaluation suites, ships the canonical clankerval
- command, and provides clnkeval as a compatibility alias during the
- rename. The package also installs a tiny dummy suite and fixture agent
+ It runs project-owned evaluation suites and ships the clankerval
+ command. The package also installs a tiny dummy suite and fixture agent
  under /usr/share/doc/clankerval/examples for smoke tests and examples.

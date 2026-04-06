@@ -21,9 +21,8 @@ override_dh_auto_install:
 	:
 
 override_dh_auto_clean:
-	rm -f clankerval evalfixture-agent clnkeval
+	rm -f clankerval evalfixture-agent
 	rm -rf .tmp
 
 override_dh_dwz:
 	# dwz fails on Go binaries
-
