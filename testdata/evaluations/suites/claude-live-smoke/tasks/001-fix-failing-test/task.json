@@ -1,0 +1,22 @@
+{
+  "id": "001-fix-failing-test",
+  "instruction_file": "input/instruction.txt",
+  "working_directory": "workspace",
+  "full_send": true,
+  "step_limit": 12,
+  "graders": {
+    "outcome_command_output": {
+      "enabled": true,
+      "required": true,
+      "command": ["bash", "{{workspace}}/test.sh"],
+      "expected_exit_code": 0,
+      "stdout_contains": ["PASS"],
+      "stderr_must_not_contain": ["FAIL"]
+    },
+    "transcript_command_trace": {
+      "enabled": true,
+      "required": false,
+      "max_command_count": 6
+    }
+  }
+}
