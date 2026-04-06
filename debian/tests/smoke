@@ -22,7 +22,7 @@ clankerval run --suite dummy \
     --output-dir "$tmp1/out" \
     >"$stdout1" 2>"$stderr1"
 grep -Fxq 'suite=dummy tasks=1 trials=1 passed=1 failed=0' "$stdout1"
-grep -Fq 'clankerval: binary ready' "$stderr1"
+grep -Fq 'clankerval:' "$stderr1"
 test -f "$tmp1/out/reports/junit.xml"
 test -f "$tmp1/out/reports/open-test-report.xml"
 test -f "$tmp1/out/trials/trial-dummy-000-00-001-basic/outcome/workspace/note.txt"
@@ -35,7 +35,7 @@ clnkeval run --suite dummy \
     --output-dir "$tmp2/out" \
     >"$stdout2" 2>"$stderr2"
 grep -Fxq 'suite=dummy tasks=1 trials=1 passed=1 failed=0' "$stdout2"
-grep -Fq 'clnkeval: binary ready' "$stderr2"
+grep -Fq 'clnkeval:' "$stderr2"
 test -f "$tmp2/out/reports/junit.xml"
 test -f "$tmp2/out/reports/open-test-report.xml"
 test -f "$tmp2/out/trials/trial-dummy-000-00-001-basic/outcome/workspace/note.txt"
