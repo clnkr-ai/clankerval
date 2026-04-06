@@ -4,12 +4,12 @@
 
 `clankerval` is the standalone evaluation runner extracted from `clnkr`. It loads checked-in suites, stages one trial workspace per task, runs an agent adapter, normalizes transcript and outcome artifacts, and writes per-trial bundles plus run-level reports.
 
-This repo ships one binary: `clankerval`. `clnkeval` remains a compatibility alias.
+This repo ships one binary: `clankerval`.
 
 ## Commands
 
 ```bash
-make build      # Build clankerval and a local clnkeval symlink (default target)
+make build      # Build clankerval (default target)
 make test       # Run the Go test suite with -race
 make evaluations  # Run the checked-in dummy suite with the fixture agent
 make man        # Regenerate doc/clankerval.1 from doc/clankerval.1.md

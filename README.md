@@ -4,15 +4,13 @@
 
 `clankerval` runs checked-in evaluation suites against agent CLIs. Today the runner supports `clnku` and Claude Code.
 
-Rename note: `clankerval` is the canonical project, repo, and CLI name. `clnkeval` remains a compatibility alias, and both commands accept the same flags.
-
 ## Build
 
 ```bash
 make build
 ```
 
-That produces `./clankerval` and a local `./clnkeval` symlink for compatibility.
+That produces `./clankerval`.
 
 ## Usage
 
