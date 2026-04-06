@@ -299,6 +299,56 @@ func TestRunTrial(t *testing.T) {
 		if !reflect.DeepEqual(artifacts.Workspace, wantWorkspace) {
 			t.Fatalf("workspace = %#v, want %#v", artifacts.Workspace, wantWorkspace)
 		}
+
+		// clnkuAdapter must populate generic CommandRecord from event log.
+		if len(artifacts.Commands) == 0 {
+			t.Fatal("Commands is empty, want at least one CommandRecord from clnku event log")
+		}
+		if artifacts.Commands[0].Command != "printf 'hello\\n' > note.txt" {
+			t.Fatalf("Commands[0].Command = %q, want printf command", artifacts.Commands[0].Command)
+		}
+		if artifacts.Commands[0].ExitCode != 0 {
+			t.Fatalf("Commands[0].ExitCode = %d, want 0", artifacts.Commands[0].ExitCode)
+		}
+		if artifacts.Commands[0].Dir == "" {
+			t.Fatal("Commands[0].Dir is empty, want workspace directory from command_start event")
+		}
+
+		// clnkuAdapter must populate generic TranscriptEvents from trajectory.
+		if len(artifacts.TranscriptEvents) == 0 {
+			t.Fatal("TranscriptEvents is empty, want adapted transcript events from clnku trajectory")
+		}
+		foundUserInstruction := false
+		foundCommandEvent := false
+		for _, ev := range artifacts.TranscriptEvents {
+			if ev.Kind == "user_instruction" {
+				foundUserInstruction = true
+			}
+			if ev.Kind == "command_result" {
+				foundCommandEvent = true
+			}
+		}
+		if !foundUserInstruction {
+			t.Fatal("TranscriptEvents missing user_instruction event")
+		}
+		if !foundCommandEvent {
+			t.Fatal("TranscriptEvents missing command_result event")
+		}
+
+		// clnkuAdapter must carry native raw artifacts for bundle writing.
+		if len(artifacts.RawAgentArtifacts) == 0 {
+			t.Fatal("RawAgentArtifacts is empty, want trajectory and event log as raw artifacts")
+		}
+		artifactNames := make(map[string]bool)
+		for _, a := range artifacts.RawAgentArtifacts {
+			artifactNames[a.Name] = true
+		}
+		if !artifactNames["trajectory.json"] {
+			t.Fatal("RawAgentArtifacts missing trajectory.json")
+		}
+		if !artifactNames["events.jsonl"] {
+			t.Fatal("RawAgentArtifacts missing events.jsonl")
+		}
 	})
 
 	t.Run("optional transcript grader failure does not fail the trial", func(t *testing.T) {
@@ -622,6 +672,171 @@ func TestRunTrial(t *testing.T) {
 		}
 	})
 
+	t.Run("adapter seam is called and results are mapped", func(t *testing.T) {
+		ctx := context.Background()
+		repoRoot := newTempRepoRoot(t)
+		harness := newHarnessForTests(t, ctx, repoRoot)
+
+		fake := &fakeAdapter{
+			result: AdapterResult{
+				ExitCode:     42,
+				SystemPrompt: "fake-system-prompt",
+				AgentVersion: "fake-1.0",
+				AgentCommand: []string{"fake-agent", "run"},
+				Trajectory:   `[]`,
+				EventLog:     ``,
+			},
+		}
+		harness.adapter = fake
+
+		suite, task := writeTempSuiteTask(t, repoRoot, "adapter-seam", map[string]string{
+			"input/instruction.txt":    "do nothing\n",
+			"input/model-turns.json":   `["{\"type\":\"done\",\"summary\":\"ok\"}"]`,
+			"input/workspace/.gitkeep": "",
+			"task.json": `{
+  "id": "adapter-seam",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "workspace",
+  "full_send": true,
+  "step_limit": 5,
+  "graders": {}
+}`,
+		})
+
+		artifacts, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider})
+		if err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+
+		if !fake.called {
+			t.Fatal("adapter was not called")
+		}
+		if fake.req.WorkspaceDir == "" {
+			t.Fatal("adapter request missing workspace dir")
+		}
+		if fake.req.TaskRoot == "" {
+			t.Fatal("adapter request missing task root")
+		}
+		if len(fake.req.Env) == 0 {
+			t.Fatal("adapter request missing env")
+		}
+		if artifacts.ExitCode != 42 {
+			t.Fatalf("exit code = %d, want 42", artifacts.ExitCode)
+		}
+		if artifacts.SystemPrompt != "fake-system-prompt" {
+			t.Fatalf("system prompt = %q, want fake-system-prompt", artifacts.SystemPrompt)
+		}
+		if artifacts.AgentVersion != "fake-1.0" {
+			t.Fatalf("agent version = %q, want fake-1.0", artifacts.AgentVersion)
+		}
+		if len(artifacts.AgentCommand) != 2 || artifacts.AgentCommand[0] != "fake-agent" {
+			t.Fatalf("agent command = %v, want [fake-agent run]", artifacts.AgentCommand)
+		}
+		if artifacts.Trajectory != `[]` {
+			t.Fatalf("trajectory = %q, want []", artifacts.Trajectory)
+		}
+	})
+
+	t.Run("claude adapter receives anthropic api key from host env", func(t *testing.T) {
+		ctx := context.Background()
+		repoRoot := newTempRepoRoot(t)
+		harness := newHarnessForTests(t, ctx, repoRoot)
+		t.Setenv("ANTHROPIC_API_KEY", "anthropic-test-key")
+
+		fakeClaude := &fakeAdapter{
+			result: AdapterResult{
+				ExitCode:     0,
+				AgentVersion: "claude-test",
+				AgentCommand: []string{"claude", "--bare"},
+			},
+		}
+		harness.claudeAdapter = fakeClaude
+
+		suite, task := writeTempSuiteTask(t, repoRoot, "claude-env-pass-through", map[string]string{
+			"input/instruction.txt":  "Say hello\n",
+			"input/model-turns.json": `["{\"type\":\"done\",\"summary\":\"hello\"}"]`,
+			"task.json": `{
+  "id": "claude-env-pass-through",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "workspace",
+  "step_limit": 5,
+  "full_send": true,
+  "agent": "claude",
+  "graders": {
+    "outcome_workspace_snapshot": { "enabled": false, "required": false },
+    "transcript_command_trace": { "enabled": false, "required": false }
+  }
+}`,
+		})
+
+		if _, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider}); err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if !fakeClaude.called {
+			t.Fatal("claude adapter was not called")
+		}
+		if !envContains(fakeClaude.req.Env, "ANTHROPIC_API_KEY", "anthropic-test-key") {
+			t.Fatalf("adapter env missing ANTHROPIC_API_KEY; env=%v", fakeClaude.req.Env)
+		}
+	})
+
+	t.Run("claude trials do not require clnku binary setup", func(t *testing.T) {
+		ctx := context.Background()
+		repoRoot := newTempRepoRoot(t)
+		harness, err := NewHarness(ctx, repoRoot, WithEvalsDir(filepath.Join(repoRoot, "evaluations")))
+		if err != nil {
+			t.Fatalf("NewHarness(): %v", err)
+		}
+		t.Cleanup(func() {
+			if err := harness.Close(); err != nil {
+				t.Fatalf("Close(): %v", err)
+			}
+		})
+
+		fakeClaude := &fakeAdapter{
+			result: AdapterResult{
+				ExitCode:     0,
+				AgentVersion: "claude-test",
+				AgentCommand: []string{"claude", "--bare"},
+			},
+		}
+		harness.claudeAdapter = fakeClaude
+
+		suite, task := writeTempSuiteTask(t, repoRoot, "claude-no-clnku", map[string]string{
+			"input/instruction.txt":  "Say hello\n",
+			"input/model-turns.json": `["{\"type\":\"done\",\"summary\":\"hello\"}"]`,
+			"task.json": `{
+  "id": "claude-no-clnku",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "workspace",
+  "step_limit": 5,
+  "full_send": true,
+  "agent": "claude",
+  "graders": {
+    "outcome_workspace_snapshot": { "enabled": false, "required": false },
+    "transcript_command_trace": { "enabled": false, "required": false }
+  }
+}`,
+		})
+
+		artifacts, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider})
+		if err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if !fakeClaude.called {
+			t.Fatal("claude adapter was not called")
+		}
+		if fakeClaude.req.BinaryPath != "" {
+			t.Fatalf("claude adapter BinaryPath = %q, want empty", fakeClaude.req.BinaryPath)
+		}
+		if artifacts.Agent != AgentClaude {
+			t.Fatalf("Agent = %q, want %q", artifacts.Agent, AgentClaude)
+		}
+	})
+
 	t.Run("cleanup removes trial dirs and harness temp root", func(t *testing.T) {
 		ctx := context.Background()
 		repoRoot := newTempRepoRoot(t)
@@ -873,6 +1088,331 @@ func TestFixtureAgentPromptFallsBackToHomeDotConfig(t *testing.T) {
 	if !strings.Contains(promptText, "<project-instructions>\nworkspace instructions\n\n</project-instructions>") {
 		t.Fatalf("system prompt = %q, want project instructions section", promptText)
 	}
+}
+
+func TestAdapterBoundaryTypes(t *testing.T) {
+	t.Run("AdapterRequest can be populated from harness state", func(t *testing.T) {
+		req := AdapterRequest{
+			TaskRoot:     "/tmp/task-root",
+			Task:         Task{ID: "test-task", InstructionFile: "input/instruction.txt", StepLimit: 10},
+			WorkspaceDir: "/tmp/workspace",
+			HomeDir:      "/tmp/home",
+			ConfigDir:    "/tmp/config",
+			StateDir:     "/tmp/state",
+			TrialRoot:    "/tmp/trial",
+			BinaryPath:   "/usr/local/bin/clnku",
+			Env:          []string{"HOME=/tmp/home", "PATH=/usr/bin"},
+		}
+		if req.TaskRoot != "/tmp/task-root" {
+			t.Fatalf("TaskRoot = %q, want /tmp/task-root", req.TaskRoot)
+		}
+		if req.Task.ID != "test-task" {
+			t.Fatalf("Task.ID = %q, want test-task", req.Task.ID)
+		}
+		if len(req.Env) != 2 {
+			t.Fatalf("Env length = %d, want 2", len(req.Env))
+		}
+	})
+
+	t.Run("AdapterResult carries agent-neutral artifacts", func(t *testing.T) {
+		result := AdapterResult{
+			ExitCode:     0,
+			AgentVersion: "1.0.0",
+			AgentCommand: []string{"clnku", "-p", "do something"},
+			SystemPrompt: "system prompt text",
+			Trajectory:   `[{"role":"user","content":"hello"}]`,
+			EventLog:     `{"type":"command_start","payload":{}}`,
+			TranscriptEvents: []TranscriptEvent{
+				{Index: 0, Kind: "user_instruction", Role: "user", Content: "hello"},
+			},
+			Commands: []CommandRecord{
+				{Command: "echo hello", Dir: "/tmp", Stdout: "hello\n", ExitCode: 0},
+			},
+			RawAgentArtifacts: []RawAgentArtifact{
+				{Name: "trajectory.json", Content: []byte(`[]`)},
+			},
+		}
+		if result.ExitCode != 0 {
+			t.Fatalf("ExitCode = %d, want 0", result.ExitCode)
+		}
+		if len(result.TranscriptEvents) != 1 {
+			t.Fatalf("TranscriptEvents length = %d, want 1", len(result.TranscriptEvents))
+		}
+		if result.TranscriptEvents[0].Kind != "user_instruction" {
+			t.Fatalf("TranscriptEvents[0].Kind = %q, want user_instruction", result.TranscriptEvents[0].Kind)
+		}
+		if len(result.Commands) != 1 {
+			t.Fatalf("Commands length = %d, want 1", len(result.Commands))
+		}
+		if result.Commands[0].Command != "echo hello" {
+			t.Fatalf("Commands[0].Command = %q, want echo hello", result.Commands[0].Command)
+		}
+		if len(result.RawAgentArtifacts) != 1 {
+			t.Fatalf("RawAgentArtifacts length = %d, want 1", len(result.RawAgentArtifacts))
+		}
+		if result.RawAgentArtifacts[0].Name != "trajectory.json" {
+			t.Fatalf("RawAgentArtifacts[0].Name = %q, want trajectory.json", result.RawAgentArtifacts[0].Name)
+		}
+	})
+
+	t.Run("AdapterResult populates RunArtifacts agent-neutral fields", func(t *testing.T) {
+		result := AdapterResult{
+			ExitCode:     1,
+			AgentVersion: "2.0.0",
+			AgentCommand: []string{"claude", "--bare", "-p", "fix the bug"},
+			TranscriptEvents: []TranscriptEvent{
+				{Index: 0, Kind: "user_instruction", Role: "user", Content: "fix the bug"},
+				{Index: 1, Kind: "command_start", Role: "system", Command: "go test ./..."},
+			},
+			Commands: []CommandRecord{
+				{Command: "go test ./...", Dir: "/workspace", Stdout: "FAIL", ExitCode: 1},
+			},
+			RawAgentArtifacts: []RawAgentArtifact{
+				{Name: "session.jsonl", Content: []byte("session data")},
+				{Name: "result.json", Content: []byte(`{"ok":false}`)},
+			},
+		}
+
+		artifacts := RunArtifacts{
+			SuiteID: "test-suite",
+			TaskID:  "test-task",
+			Agent:   AgentClaude,
+		}
+		artifacts.ExitCode = result.ExitCode
+		artifacts.AgentVersion = result.AgentVersion
+		artifacts.AgentCommand = result.AgentCommand
+		artifacts.TranscriptEvents = result.TranscriptEvents
+		artifacts.Commands = result.Commands
+		artifacts.RawAgentArtifacts = result.RawAgentArtifacts
+
+		if artifacts.Agent != AgentClaude {
+			t.Fatalf("Agent = %q, want %q", artifacts.Agent, AgentClaude)
+		}
+		if artifacts.AgentVersion != "2.0.0" {
+			t.Fatalf("AgentVersion = %q, want 2.0.0", artifacts.AgentVersion)
+		}
+		if len(artifacts.AgentCommand) != 4 {
+			t.Fatalf("AgentCommand length = %d, want 4", len(artifacts.AgentCommand))
+		}
+		if len(artifacts.TranscriptEvents) != 2 {
+			t.Fatalf("TranscriptEvents length = %d, want 2", len(artifacts.TranscriptEvents))
+		}
+		if len(artifacts.Commands) != 1 {
+			t.Fatalf("Commands length = %d, want 1", len(artifacts.Commands))
+		}
+		if len(artifacts.RawAgentArtifacts) != 2 {
+			t.Fatalf("RawAgentArtifacts length = %d, want 2", len(artifacts.RawAgentArtifacts))
+		}
+	})
+
+	t.Run("CommandRecord JSON round-trips", func(t *testing.T) {
+		record := CommandRecord{
+			Command:  "echo hello",
+			Dir:      "/workspace",
+			Stdout:   "hello\n",
+			Stderr:   "",
+			ExitCode: 0,
+		}
+		data, err := json.Marshal(record)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		var decoded CommandRecord
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if decoded != record {
+			t.Fatalf("round-trip mismatch: got %#v, want %#v", decoded, record)
+		}
+	})
+
+	t.Run("TranscriptEvent JSON round-trips", func(t *testing.T) {
+		event := TranscriptEvent{
+			Index:   3,
+			Kind:    "command_start",
+			Role:    "system",
+			Content: "",
+			Command: "ls -la",
+		}
+		data, err := json.Marshal(event)
+		if err != nil {
+			t.Fatalf("Marshal: %v", err)
+		}
+		var decoded TranscriptEvent
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("Unmarshal: %v", err)
+		}
+		if decoded != event {
+			t.Fatalf("round-trip mismatch: got %#v, want %#v", decoded, event)
+		}
+	})
+
+	t.Run("RawAgentArtifact carries name and content", func(t *testing.T) {
+		artifact := RawAgentArtifact{
+			Name:    "events.jsonl",
+			Content: []byte(`{"type":"command_start"}`),
+		}
+		if artifact.Name != "events.jsonl" {
+			t.Fatalf("Name = %q, want events.jsonl", artifact.Name)
+		}
+		if string(artifact.Content) != `{"type":"command_start"}` {
+			t.Fatalf("Content = %q, want event JSON", string(artifact.Content))
+		}
+	})
+}
+
+func TestRunTrialPopulatesAgentField(t *testing.T) {
+	ctx := context.Background()
+	repoRoot := newTempRepoRoot(t)
+	harness := newHarnessForTests(t, ctx, repoRoot)
+
+	suite, task := loadDefaultBasicEdit(t, repoRoot)
+	cfg := RunConfig{Mode: ModeMockProvider, Agent: AgentClnku}
+	artifacts, err := harness.RunTrial(ctx, suite, task, cfg)
+	if err != nil {
+		t.Fatalf("RunTrial(): %v", err)
+	}
+
+	if artifacts.Agent != AgentClnku {
+		t.Fatalf("Agent = %q, want %q", artifacts.Agent, AgentClnku)
+	}
+}
+
+func TestRunTrialUsesAdapterSeam(t *testing.T) {
+	t.Run("RunTrial calls adapter.Run and uses its result", func(t *testing.T) {
+		ctx := context.Background()
+		repoRoot := newTempRepoRoot(t)
+		harness := newHarnessForTests(t, ctx, repoRoot)
+
+		// Replace the real adapter with a recording wrapper.
+		realAdapter := harness.adapter
+		recorder := &recordingAdapter{delegate: realAdapter}
+		harness.adapter = recorder
+
+		suite, task := loadDefaultBasicEdit(t, repoRoot)
+		artifacts, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider})
+		if err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+
+		// Prove the adapter was called exactly once.
+		if recorder.callCount != 1 {
+			t.Fatalf("adapter call count = %d, want 1", recorder.callCount)
+		}
+
+		// Prove the request was populated correctly.
+		req := recorder.lastRequest
+		if req.Task.ID != task.ID {
+			t.Fatalf("adapter request Task.ID = %q, want %q", req.Task.ID, task.ID)
+		}
+		if req.BinaryPath != harness.binaryPath {
+			t.Fatalf("adapter request BinaryPath = %q, want %q", req.BinaryPath, harness.binaryPath)
+		}
+		if req.WorkspaceDir == "" {
+			t.Fatal("adapter request WorkspaceDir is empty")
+		}
+		if req.TrialRoot == "" {
+			t.Fatal("adapter request TrialRoot is empty")
+		}
+		if len(req.Env) == 0 {
+			t.Fatal("adapter request Env is empty")
+		}
+
+		// Prove the adapter result flows into artifacts.
+		if len(artifacts.AgentCommand) == 0 {
+			t.Fatal("AgentCommand is empty, want non-empty from adapter result")
+		}
+		if artifacts.AgentCommand[0] != harness.binaryPath {
+			t.Fatalf("AgentCommand[0] = %q, want binary path %q", artifacts.AgentCommand[0], harness.binaryPath)
+		}
+		if artifacts.SystemPrompt == "" {
+			t.Fatal("SystemPrompt is empty, want populated from adapter result")
+		}
+		if artifacts.Trajectory == "" {
+			t.Fatal("Trajectory is empty, want populated from adapter result")
+		}
+		if artifacts.EventLog == "" {
+			t.Fatal("EventLog is empty, want populated from adapter result")
+		}
+	})
+
+	t.Run("adapter stages project instructions", func(t *testing.T) {
+		ctx := context.Background()
+		repoRoot := newTempRepoRoot(t)
+		harness := newHarnessForTests(t, ctx, repoRoot)
+
+		suite, task := loadDefaultBasicEdit(t, repoRoot)
+		artifacts, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider})
+		if err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+
+		// Project instructions staged by adapter appear in system prompt.
+		if !strings.Contains(artifacts.SystemPrompt, "Keep changes tight. Work in the current directory.") {
+			t.Fatalf("system prompt missing project AGENTS instructions: %q", artifacts.SystemPrompt)
+		}
+		// Workspace has AGENTS.md staged by adapter.
+		if artifacts.Workspace["AGENTS.md"] != "Keep changes tight. Work in the current directory.\n" {
+			t.Fatalf("workspace AGENTS.md = %q, want project instructions", artifacts.Workspace["AGENTS.md"])
+		}
+	})
+
+	t.Run("second trial reuses same adapter", func(t *testing.T) {
+		ctx := context.Background()
+		repoRoot := newTempRepoRoot(t)
+		harness := newHarnessForTests(t, ctx, repoRoot)
+
+		recorder := &recordingAdapter{delegate: harness.adapter}
+		harness.adapter = recorder
+
+		suite, task := loadDefaultBasicEdit(t, repoRoot)
+		if _, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider}); err != nil {
+			t.Fatalf("first RunTrial(): %v", err)
+		}
+		if _, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider}); err != nil {
+			t.Fatalf("second RunTrial(): %v", err)
+		}
+		if recorder.callCount != 2 {
+			t.Fatalf("adapter call count = %d, want 2", recorder.callCount)
+		}
+	})
+}
+
+// recordingAdapter wraps a real AgentAdapter and records calls.
+type recordingAdapter struct {
+	delegate    AgentAdapter
+	callCount   int
+	lastRequest AdapterRequest
+}
+
+func (r *recordingAdapter) Run(ctx context.Context, req AdapterRequest) (AdapterResult, error) {
+	r.callCount++
+	r.lastRequest = req
+	return r.delegate.Run(ctx, req)
+}
+
+// fakeAdapter is a test double for AgentAdapter that records its invocation.
+type fakeAdapter struct {
+	called bool
+	req    AdapterRequest
+	result AdapterResult
+	err    error
+}
+
+func (f *fakeAdapter) Run(_ context.Context, req AdapterRequest) (AdapterResult, error) {
+	f.called = true
+	f.req = req
+	return f.result, f.err
+}
+
+func envContains(env []string, key, value string) bool {
+	prefix := key + "="
+	for _, item := range env {
+		if strings.HasPrefix(item, prefix) && strings.TrimPrefix(item, prefix) == value {
+			return true
+		}
+	}
+	return false
 }
 
 func loadDefaultBasicEdit(t *testing.T, repoRoot string) (Suite, Task) {

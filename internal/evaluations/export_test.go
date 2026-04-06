@@ -17,6 +17,7 @@ func TestBuildRunReport(t *testing.T) {
 				suiteID:        "suite-a",
 				taskID:         "task-b",
 				trialID:        "trial-c",
+				agent:          AgentClnku,
 				suiteTaskIndex: 1,
 				trialAttempt:   1,
 				trialPassed:    true,
@@ -25,6 +26,7 @@ func TestBuildRunReport(t *testing.T) {
 				suiteID:        "suite-a",
 				taskID:         "task-a",
 				trialID:        "trial-z",
+				agent:          AgentClnku,
 				suiteTaskIndex: 0,
 				trialAttempt:   0,
 				trialPassed:    false,
@@ -36,6 +38,7 @@ func TestBuildRunReport(t *testing.T) {
 				suiteID:        "suite-a",
 				taskID:         "task-b",
 				trialID:        "trial-a",
+				agent:          AgentClnku,
 				suiteTaskIndex: 1,
 				trialAttempt:   0,
 				trialPassed:    true,
@@ -44,6 +47,7 @@ func TestBuildRunReport(t *testing.T) {
 				suiteID:        "suite-a",
 				taskID:         "task-b",
 				trialID:        "trial-b",
+				agent:          AgentClnku,
 				suiteTaskIndex: 1,
 				trialAttempt:   0,
 				trialPassed:    true,
@@ -117,6 +121,34 @@ func TestBuildRunReport(t *testing.T) {
 		}
 	})
 
+	t.Run("mixed agent identity within one task rejected", func(t *testing.T) {
+		bundles := []Bundle{
+			mustLoadedTrialBundle(t, trialBundleSpec{
+				suiteID:        "suite-a",
+				taskID:         "task-a",
+				trialID:        "trial-1",
+				agent:          AgentClnku,
+				suiteTaskIndex: 0,
+				trialAttempt:   0,
+				trialPassed:    true,
+			}),
+			mustLoadedTrialBundle(t, trialBundleSpec{
+				suiteID:        "suite-a",
+				taskID:         "task-a",
+				trialID:        "trial-2",
+				agent:          AgentClaude,
+				suiteTaskIndex: 0,
+				trialAttempt:   1,
+				trialPassed:    true,
+			}),
+		}
+
+		_, err := BuildRunReport(bundles)
+		if err == nil || !strings.Contains(err.Error(), "inconsistent agent identity") {
+			t.Fatalf("BuildRunReport() error = %v, want inconsistent agent identity rejection", err)
+		}
+	})
+
 	t.Run("counts use trial_passed rather than grader failure presence", func(t *testing.T) {
 		bundles := []Bundle{
 			mustLoadedTrialBundle(t, trialBundleSpec{
@@ -168,6 +200,7 @@ func TestExportOpenTestReport(t *testing.T) {
 			suiteID:        "suite-a",
 			taskID:         "task-b",
 			trialID:        "trial-c",
+			agent:          AgentClnku,
 			suiteTaskIndex: 1,
 			trialAttempt:   1,
 			trialPassed:    true,
@@ -176,6 +209,7 @@ func TestExportOpenTestReport(t *testing.T) {
 			suiteID:        "suite-a",
 			taskID:         "task-a",
 			trialID:        "trial-z",
+			agent:          AgentClnku,
 			suiteTaskIndex: 0,
 			trialAttempt:   0,
 			trialPassed:    false,
@@ -187,6 +221,7 @@ func TestExportOpenTestReport(t *testing.T) {
 			suiteID:        "suite-a",
 			taskID:         "task-b",
 			trialID:        "trial-a",
+			agent:          AgentClnku,
 			suiteTaskIndex: 1,
 			trialAttempt:   0,
 			trialPassed:    true,
@@ -218,25 +253,25 @@ func TestExportOpenTestReport(t *testing.T) {
 		"time": "2026-03-31T10:00:00Z",
 	})
 	assertOTRStartElement(t, elems[2], openTestReportingEventsNS, "started", map[string]string{
-		"id":       "task:suite-a:0:task-a",
-		"name":     "task task-a",
+		"id":       "task:suite-a:clnku:0:task-a",
+		"name":     "task task-a [clnku]",
 		"parentId": "suite:suite-a",
 		"time":     "2026-03-31T10:00:00Z",
 	})
 	assertOTRStartElement(t, elems[3], openTestReportingEventsNS, "started", map[string]string{
-		"id":       "trial:suite-a:0:0:trial-z",
-		"name":     "trial trial-z",
-		"parentId": "task:suite-a:0:task-a",
+		"id":       "trial:suite-a:clnku:0:0:trial-z",
+		"name":     "trial trial-z [clnku]",
+		"parentId": "task:suite-a:clnku:0:task-a",
 		"time":     "2026-03-31T10:00:00Z",
 	})
 	assertOTRStartElement(t, elems[4], openTestReportingEventsNS, "finished", map[string]string{
-		"id":   "trial:suite-a:0:0:trial-z",
+		"id":   "trial:suite-a:clnku:0:0:trial-z",
 		"time": "2026-03-31T10:00:02Z",
 	})
 	assertOTRStartElement(t, elems[5], openTestReportingCoreNS, "result", map[string]string{
 		"status": "FAILED",
 	})
-	assertDeterministicElementOrder(t, elems, "started", "id", []string{"trial:suite-a:0:0:trial-z", "trial:suite-a:1:0:trial-a", "trial:suite-a:1:1:trial-c"})
+	assertDeterministicElementOrder(t, elems, "started", "id", []string{"trial:suite-a:clnku:0:0:trial-z", "trial:suite-a:clnku:1:0:trial-a", "trial:suite-a:clnku:1:1:trial-c"})
 	if !strings.Contains(string(data), "missing note.txt") || !strings.Contains(string(data), "outcome_workspace_snapshot") {
 		t.Fatalf("report missing failure context: %q", string(data))
 	}
@@ -248,6 +283,7 @@ func TestExportJUnit(t *testing.T) {
 			suiteID:        "suite-a",
 			taskID:         "task-b",
 			trialID:        "trial-c",
+			agent:          AgentClnku,
 			suiteTaskIndex: 1,
 			trialAttempt:   1,
 			trialPassed:    true,
@@ -256,6 +292,7 @@ func TestExportJUnit(t *testing.T) {
 			suiteID:        "suite-a",
 			taskID:         "task-a",
 			trialID:        "trial-z",
+			agent:          AgentClnku,
 			suiteTaskIndex: 0,
 			trialAttempt:   0,
 			trialPassed:    false,
@@ -267,6 +304,7 @@ func TestExportJUnit(t *testing.T) {
 			suiteID:        "suite-a",
 			taskID:         "task-b",
 			trialID:        "trial-a",
+			agent:          AgentClnku,
 			suiteTaskIndex: 1,
 			trialAttempt:   0,
 			trialPassed:    true,
@@ -294,6 +332,10 @@ func TestExportJUnit(t *testing.T) {
 	if !strings.Contains(content, "missing note.txt") || !strings.Contains(content, "outcome_workspace_snapshot") {
 		t.Fatalf("JUnit output missing failure context: %q", content)
 	}
+	// Agent must appear in JUnit classname so the same task under different agents doesn't collide.
+	if !strings.Contains(content, "clnku") {
+		t.Fatalf("JUnit classname missing agent: %q", content)
+	}
 	assertDeterministicElementOrder(t, parseXMLStartElements(t, content), "testcase", "name", []string{"trial-z", "trial-a", "trial-c"})
 }
 
@@ -301,6 +343,7 @@ type trialBundleSpec struct {
 	suiteID               string
 	taskID                string
 	trialID               string
+	agent                 Agent
 	suiteTaskIndex        int
 	trialAttempt          int
 	trialPassed           bool
@@ -318,6 +361,9 @@ func mustLoadedTrialBundle(t *testing.T, spec trialBundleSpec) Bundle {
 	artifacts.TrialAttempt = spec.trialAttempt
 	artifacts.TrialPassed = spec.trialPassed
 	artifacts.FailedRequiredGraders = append([]GraderResult(nil), spec.failedRequiredGraders...)
+	if spec.agent != "" {
+		artifacts.Agent = spec.agent
+	}
 
 	root := filepath.Join(t.TempDir(), spec.trialID)
 	if _, err := WriteTrialBundle(root, artifacts, spec.failedRequiredGraders); err != nil {

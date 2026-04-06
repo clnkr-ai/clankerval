@@ -5,9 +5,25 @@ import "fmt"
 // RunConfig selects the provider endpoint and model for one trial run.
 type RunConfig struct {
 	Mode    Mode
+	Agent   Agent
 	APIKey  string
 	BaseURL string
 	Model   string
+}
+
+// EffectiveAgent resolves the agent for a trial with precedence: task > suite > run default.
+// When no level sets the agent, the default is clnku.
+func EffectiveAgent(task, suite, runDefault Agent) Agent {
+	if task != "" {
+		return task
+	}
+	if suite != "" {
+		return suite
+	}
+	if runDefault != "" {
+		return runDefault
+	}
+	return AgentClnku
 }
 
 // LoadRunConfigFromEnv loads evaluation runtime configuration from CLNKR_EVALUATION_*.

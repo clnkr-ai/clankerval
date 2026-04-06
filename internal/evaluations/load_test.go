@@ -7,6 +7,203 @@ import (
 	"testing"
 )
 
+func TestLoadSuiteAgent(t *testing.T) {
+	t.Run("loads suite with valid agent", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "suite.json")
+		writeTestFile(t, path, `{
+  "id": "default",
+  "description": "suite with agent",
+  "mode": "mock-provider",
+  "agent": "claude",
+  "trials_per_task": 1,
+  "failure_policy": {
+    "stop_on_first_failure": true,
+    "max_failed_tasks": 1
+  },
+  "tasks": ["001-basic-edit"]
+}`)
+
+		got, err := LoadSuite(path)
+		if err != nil {
+			t.Fatalf("LoadSuite(): %v", err)
+		}
+		if got.Agent != AgentClaude {
+			t.Fatalf("suite agent = %q, want %q", got.Agent, AgentClaude)
+		}
+	})
+
+	t.Run("loads suite without agent field (backward compat)", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "suite.json")
+		writeTestFile(t, path, `{
+  "id": "default",
+  "description": "suite without agent",
+  "mode": "mock-provider",
+  "trials_per_task": 1,
+  "failure_policy": {
+    "stop_on_first_failure": true,
+    "max_failed_tasks": 1
+  },
+  "tasks": ["001-basic-edit"]
+}`)
+
+		got, err := LoadSuite(path)
+		if err != nil {
+			t.Fatalf("LoadSuite(): %v", err)
+		}
+		if got.Agent != "" {
+			t.Fatalf("suite agent = %q, want empty", got.Agent)
+		}
+	})
+
+	t.Run("rejects suite with invalid agent", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "suite.json")
+		writeTestFile(t, path, `{
+  "id": "default",
+  "description": "suite with bad agent",
+  "mode": "mock-provider",
+  "agent": "bogus",
+  "trials_per_task": 1,
+  "failure_policy": {
+    "stop_on_first_failure": true,
+    "max_failed_tasks": 1
+  },
+  "tasks": ["001-basic-edit"]
+}`)
+
+		_, err := LoadSuite(path)
+		if err == nil {
+			t.Fatal("LoadSuite() error = nil, want invalid agent failure")
+		}
+		if !strings.Contains(err.Error(), "agent") {
+			t.Fatalf("error = %v, want agent validation error", err)
+		}
+	})
+}
+
+func TestLoadTaskAgent(t *testing.T) {
+	t.Run("loads task with valid agent", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "task.json")
+		writeTestFile(t, path, `{
+  "id": "001-basic-edit",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "workspace",
+  "agent": "clnku",
+  "full_send": true,
+  "step_limit": 10,
+  "graders": {
+    "outcome_workspace_snapshot": {
+      "enabled": true,
+      "required": true
+    },
+    "transcript_command_trace": {
+      "enabled": true,
+      "required": false
+    }
+  }
+}`)
+
+		got, err := LoadTask(path)
+		if err != nil {
+			t.Fatalf("LoadTask(): %v", err)
+		}
+		if got.Agent != AgentClnku {
+			t.Fatalf("task agent = %q, want %q", got.Agent, AgentClnku)
+		}
+	})
+
+	t.Run("loads task without agent field (backward compat)", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "task.json")
+		writeTestFile(t, path, `{
+  "id": "001-basic-edit",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "workspace",
+  "full_send": true,
+  "step_limit": 10,
+  "graders": {
+    "outcome_workspace_snapshot": {
+      "enabled": true,
+      "required": true
+    },
+    "transcript_command_trace": {
+      "enabled": true,
+      "required": false
+    }
+  }
+}`)
+
+		got, err := LoadTask(path)
+		if err != nil {
+			t.Fatalf("LoadTask(): %v", err)
+		}
+		if got.Agent != "" {
+			t.Fatalf("task agent = %q, want empty", got.Agent)
+		}
+	})
+
+	t.Run("rejects task with invalid agent", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "task.json")
+		writeTestFile(t, path, `{
+  "id": "001-basic-edit",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "workspace",
+  "agent": "bogus",
+  "full_send": true,
+  "step_limit": 10,
+  "graders": {
+    "outcome_workspace_snapshot": {
+      "enabled": true,
+      "required": true
+    },
+    "transcript_command_trace": {
+      "enabled": true,
+      "required": false
+    }
+  }
+}`)
+
+		_, err := LoadTask(path)
+		if err == nil {
+			t.Fatal("LoadTask() error = nil, want invalid agent failure")
+		}
+		if !strings.Contains(err.Error(), "agent") {
+			t.Fatalf("error = %v, want agent validation error", err)
+		}
+	})
+}
+
+func TestEffectiveAgent(t *testing.T) {
+	tests := []struct {
+		name       string
+		task       Agent
+		suite      Agent
+		runDefault Agent
+		want       Agent
+	}{
+		{"task wins over suite and default", AgentClaude, AgentClnku, AgentClnku, AgentClaude},
+		{"suite wins over default", "", AgentClaude, AgentClnku, AgentClaude},
+		{"default used when task and suite empty", "", "", AgentClnku, AgentClnku},
+		{"task wins over default when suite empty", AgentClaude, "", AgentClnku, AgentClaude},
+		{"all empty defaults to clnku", "", "", "", AgentClnku},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EffectiveAgent(tt.task, tt.suite, tt.runDefault)
+			if got != tt.want {
+				t.Fatalf("EffectiveAgent(%q, %q, %q) = %q, want %q", tt.task, tt.suite, tt.runDefault, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadSuite(t *testing.T) {
 	t.Run("malformed json", func(t *testing.T) {
 		dir := t.TempDir()

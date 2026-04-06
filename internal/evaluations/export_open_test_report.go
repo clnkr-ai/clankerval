@@ -28,11 +28,12 @@ func ExportOpenTestReport(report RunReport, dst string) error {
 	suiteFinishedAt := reportFinishedAt(report)
 	writeOTRStarted(&buf, 1, otrSuiteID(report.SuiteID), "suite "+report.SuiteID, "", suiteStartedAt)
 	for _, task := range report.Tasks {
-		taskID := otrTaskID(report.SuiteID, task.SuiteTaskIndex, task.TaskID)
-		writeOTRStarted(&buf, 2, taskID, "task "+task.TaskID, otrSuiteID(report.SuiteID), taskStartedAt(task))
+		agentID := taskAgentID(task)
+		taskID := otrTaskID(report.SuiteID, agentID, task.SuiteTaskIndex, task.TaskID)
+		writeOTRStarted(&buf, 2, taskID, "task "+task.TaskID+" ["+agentID+"]", otrSuiteID(report.SuiteID), taskStartedAt(task))
 		for _, trial := range task.Trials {
-			trialID := otrTrialID(report.SuiteID, task.SuiteTaskIndex, trial.TrialAttempt, trial.TrialID)
-			writeOTRStarted(&buf, 3, trialID, "trial "+trial.TrialID, taskID, trial.StartedAt)
+			trialID := otrTrialID(report.SuiteID, agentID, task.SuiteTaskIndex, trial.TrialAttempt, trial.TrialID)
+			writeOTRStarted(&buf, 3, trialID, "trial "+trial.TrialID+" ["+agentID+"]", taskID, trial.StartedAt)
 			if trial.Passed {
 				writeOTRFinished(&buf, 3, trialID, true, "", trial.FinishedAt)
 			} else {
@@ -103,12 +104,19 @@ func otrSuiteID(suiteID string) string {
 	return "suite:" + suiteID
 }
 
-func otrTaskID(suiteID string, suiteTaskIndex int, taskID string) string {
-	return "task:" + suiteID + ":" + fmt.Sprintf("%d", suiteTaskIndex) + ":" + taskID
+func otrTaskID(suiteID, agentID string, suiteTaskIndex int, taskID string) string {
+	return "task:" + suiteID + ":" + agentID + ":" + fmt.Sprintf("%d", suiteTaskIndex) + ":" + taskID
 }
 
-func otrTrialID(suiteID string, suiteTaskIndex, trialAttempt int, trialID string) string {
-	return "trial:" + suiteID + ":" + fmt.Sprintf("%d", suiteTaskIndex) + ":" + fmt.Sprintf("%d", trialAttempt) + ":" + trialID
+func otrTrialID(suiteID, agentID string, suiteTaskIndex, trialAttempt int, trialID string) string {
+	return "trial:" + suiteID + ":" + agentID + ":" + fmt.Sprintf("%d", suiteTaskIndex) + ":" + fmt.Sprintf("%d", trialAttempt) + ":" + trialID
+}
+
+func taskAgentID(task TaskReport) string {
+	if len(task.Trials) > 0 && task.Trials[0].Agent.ID != "" {
+		return task.Trials[0].Agent.ID
+	}
+	return "unknown"
 }
 
 func writeIndent(buf *bytes.Buffer, indent int) {

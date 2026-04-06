@@ -93,8 +93,8 @@ func TestRun(t *testing.T) {
 		if !strings.Contains(stderr.String(), "clankerval: building clnku from source...") {
 			t.Fatalf("stderr = %q, want source-build progress", stderr.String())
 		}
-		if !strings.Contains(stderr.String(), "clankerval: binary ready") {
-			t.Fatalf("stderr = %q, want binary-ready progress", stderr.String())
+		if !strings.Contains(stderr.String(), "clankerval: harness ready") {
+			t.Fatalf("stderr = %q, want harness-ready progress", stderr.String())
 		}
 		if _, err := os.Stat(filepath.Join(outputDir, "reports", "junit.xml")); err != nil {
 			t.Fatalf("expected report in temp output dir: %v", err)
@@ -111,13 +111,9 @@ func TestRun(t *testing.T) {
 		})
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
-		pathEnv := filepath.Dir(stagedClnku)
-		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID}, repoRoot, stdout, stderr, func(key string) string {
-			if key == "PATH" {
-				return pathEnv
-			}
-			return ""
-		})
+		pathEnv := filepath.Dir(stagedClnku) + string(os.PathListSeparator) + os.Getenv("PATH")
+		t.Setenv("PATH", pathEnv)
+		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID}, repoRoot, stdout, stderr, os.Getenv)
 		if exitCode != 0 {
 			t.Fatalf("exit code = %d, want 0; stderr=%q", exitCode, stderr.String())
 		}
@@ -127,8 +123,29 @@ func TestRun(t *testing.T) {
 		if strings.Contains(stderr.String(), "building clnku from source...") {
 			t.Fatalf("stderr = %q, want PATH fallback without source build", stderr.String())
 		}
-		if !strings.Contains(stderr.String(), "clankerval: binary ready") {
-			t.Fatalf("stderr = %q, want binary-ready progress", stderr.String())
+		if !strings.Contains(stderr.String(), "clankerval: harness ready") {
+			t.Fatalf("stderr = %q, want harness-ready progress", stderr.String())
+		}
+	})
+
+	t.Run("claude agent does not preflight clnku before suite loading", func(t *testing.T) {
+		repoRoot := newTempRepoRoot(t)
+		stdout := &bytes.Buffer{}
+		stderr := &bytes.Buffer{}
+		exitCode := Run("clankerval", "dev", []string{"run", "--suite", "missing", "--agent", "claude"}, repoRoot, stdout, stderr, func(key string) string {
+			if key == "PATH" {
+				return ""
+			}
+			return ""
+		})
+		if exitCode == 0 {
+			t.Fatal("exit code = 0, want non-zero for missing suite")
+		}
+		if strings.Contains(stderr.String(), "resolve clnku binary") {
+			t.Fatalf("stderr = %q, want suite load failure before any clnku preflight", stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "run suite load suite") {
+			t.Fatalf("stderr = %q, want suite load failure", stderr.String())
 		}
 	})
 
@@ -193,8 +210,8 @@ func TestRun(t *testing.T) {
 			t.Fatalf("stdout = %q, want %q", got, want)
 		}
 		for _, want := range []string{
-			"clankerval: binary ready",
-			`clankerval: task 1/1 "001-basic" trial 1/1 ...`,
+			"clankerval: harness ready",
+			`clankerval: task 1/1 "001-basic" [clnku] trial 1/1 ...`,
 		} {
 			if !strings.Contains(stderr.String(), want) {
 				t.Fatalf("stderr = %q, want substring %q", stderr.String(), want)
@@ -204,12 +221,44 @@ func TestRun(t *testing.T) {
 		for _, rel := range []string{
 			filepath.Join(outputDir, "reports", "junit.xml"),
 			filepath.Join(outputDir, "reports", "open-test-report.xml"),
-			filepath.Join(outputDir, "trials", "trial-dummy-000-00-001-basic", "bundle.json"),
-			filepath.Join(outputDir, "trials", "trial-dummy-000-00-001-basic", "outcome", "workspace", "note.txt"),
+			filepath.Join(outputDir, "trials", "trial-dummy-clnku-000-00-001-basic", "bundle.json"),
+			filepath.Join(outputDir, "trials", "trial-dummy-clnku-000-00-001-basic", "outcome", "workspace", "note.txt"),
 		} {
 			if _, err := os.Stat(rel); err != nil {
 				t.Fatalf("Stat(%q): %v", rel, err)
 			}
+		}
+	})
+
+	t.Run("run accepts --agent flag", func(t *testing.T) {
+		repoRoot := newTempRepoRoot(t)
+		suiteID := writeTempSuite(t, repoRoot, suiteSpec{
+			trialsPerTask: 1,
+			stopOnFirst:   true,
+			maxFailed:     1,
+			tasks:         []suiteTaskSpec{{id: "task-pass", expectedNote: "hello\n"}},
+		})
+
+		stdout := &bytes.Buffer{}
+		stderr := &bytes.Buffer{}
+		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID, "--binary", stagedClnku, "--agent", "clnku"}, repoRoot, stdout, stderr, func(string) string { return "" })
+		if exitCode != 0 {
+			t.Fatalf("exit code = %d, want 0; stderr=%q", exitCode, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "suite="+suiteID) {
+			t.Fatalf("stdout = %q, want suite summary", stdout.String())
+		}
+	})
+
+	t.Run("run rejects invalid --agent value", func(t *testing.T) {
+		stdout := &bytes.Buffer{}
+		stderr := &bytes.Buffer{}
+		exitCode := Run("clankerval", "dev", []string{"run", "--suite", "default", "--agent", "bogus"}, ".", stdout, stderr, func(string) string { return "" })
+		if exitCode == 0 {
+			t.Fatal("exit code = 0, want non-zero for invalid agent")
+		}
+		if !strings.Contains(stderr.String(), "agent") {
+			t.Fatalf("stderr = %q, want agent validation error", stderr.String())
 		}
 	})
 

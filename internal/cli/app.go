@@ -82,6 +82,7 @@ Flags:
 		flags.PrintDefaults()
 	}
 	suiteID := flags.String("suite", "default", "suite id to run")
+	agentFlag := flags.String("agent", "clnku", "agent under test: clnku or claude")
 	binaryPath := flags.String("binary", "", "path to agent binary under test (default: build ./cmd/clnku when present, otherwise resolve clnku from PATH)")
 	evalsDir := flags.String("evals-dir", "", "evaluations directory (default: <cwd>/evaluations)")
 	outputDir := flags.String("output-dir", "", "output directory for trials and reports (default: evals dir)")
@@ -97,22 +98,24 @@ Flags:
 		return 1
 	}
 
+	agent := evaluations.Agent(*agentFlag)
+	switch agent {
+	case evaluations.AgentClnku, evaluations.AgentClaude:
+	default:
+		_, _ = fmt.Fprintf(stderr, "Error: --agent must be %q or %q, got %q\n", evaluations.AgentClnku, evaluations.AgentClaude, agent)
+		return 1
+	}
+
 	cfg, err := evaluations.LoadRunConfigFromEnv(getenv)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
 		return 1
 	}
+	cfg.Agent = agent
 
 	var suiteOpts []evaluations.RunSuiteOption
 	if *binaryPath != "" {
 		suiteOpts = append(suiteOpts, evaluations.WithSuiteBinary(*binaryPath))
-	} else if !hasClnkuSourceTree(cwd) {
-		resolved, err := resolveBinaryOnPath("clnku", getenv("PATH"))
-		if err != nil {
-			_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
-			return 1
-		}
-		suiteOpts = append(suiteOpts, evaluations.WithSuiteBinary(resolved))
 	}
 	if *evalsDir != "" {
 		abs, err := resolvePathFromCWD(cwd, *evalsDir)
@@ -201,26 +204,6 @@ func compatibilityNote(name string) string {
 		return ""
 	}
 	return "\nNote: clankerval is the canonical command name. clnkeval remains supported for compatibility.\n"
-}
-
-func hasClnkuSourceTree(cwd string) bool {
-	info, err := os.Stat(filepath.Join(cwd, "cmd", "clnku"))
-	return err == nil && info.IsDir()
-}
-
-func resolveBinaryOnPath(name, pathEnv string) (string, error) {
-	for _, dir := range filepath.SplitList(pathEnv) {
-		if dir == "" {
-			continue
-		}
-		candidate := filepath.Join(dir, name)
-		info, err := os.Stat(candidate)
-		if err != nil || info.IsDir() || info.Mode()&0o111 == 0 {
-			continue
-		}
-		return candidate, nil
-	}
-	return "", fmt.Errorf("resolve %s binary: executable file not found in PATH", name)
 }
 
 func resolvePathFromCWD(cwd, path string) (string, error) {

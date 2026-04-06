@@ -90,11 +90,13 @@ func RunSuite(ctx context.Context, repoRoot, suiteID string, cfg RunConfig, opts
 		return RunReport{}, fmt.Errorf("run suite reset report output: %w", err)
 	}
 
+	if suiteUsesClnku(tasks, suite, cfg) && o.binaryPath == "" && repoHasClnkuSourceTree(repoRoot) {
+		o.emit("building clnku from source...")
+	}
+
 	var harnessOpts []HarnessOption
 	if o.binaryPath != "" {
 		harnessOpts = append(harnessOpts, WithBinary(o.binaryPath))
-	} else if repoRoot != "" {
-		o.emit("building clnku from source...")
 	}
 	harnessOpts = append(harnessOpts, WithEvalsDir(evalsDir))
 	harness, err := NewHarness(ctx, repoRoot, harnessOpts...)
@@ -104,7 +106,7 @@ func RunSuite(ctx context.Context, repoRoot, suiteID string, cfg RunConfig, opts
 	defer func() {
 		_ = harness.Close()
 	}()
-	o.emit("binary ready")
+	o.emit("harness ready")
 
 	trialsRoot := filepath.Join(outputDir, "trials")
 	reportsRoot := filepath.Join(outputDir, "reports")
@@ -114,8 +116,8 @@ func RunSuite(ctx context.Context, repoRoot, suiteID string, cfg RunConfig, opts
 	for taskIndex, task := range tasks {
 		taskFailed := false
 		for trialAttempt := 0; trialAttempt < suite.TrialsPerTask; trialAttempt++ {
-			o.emit("task %d/%d %q trial %d/%d ...",
-				taskIndex+1, len(tasks), task.ID,
+			o.emit("task %d/%d %q [%s] trial %d/%d ...",
+				taskIndex+1, len(tasks), task.ID, EffectiveAgent(task.Agent, suite.Agent, cfg.Agent),
 				trialAttempt+1, suite.TrialsPerTask)
 
 			trialStart := time.Now()
@@ -125,7 +127,7 @@ func RunSuite(ctx context.Context, repoRoot, suiteID string, cfg RunConfig, opts
 			}
 			elapsed := time.Since(trialStart).Truncate(100 * time.Millisecond)
 
-			deterministicTrialID := canonicalTrialID(suite.ID, taskIndex, trialAttempt, task.ID)
+			deterministicTrialID := canonicalTrialID(suite.ID, artifacts.Agent, taskIndex, trialAttempt, task.ID)
 			canonicalBundleRoot := filepath.Join(trialsRoot, deterministicTrialID)
 			artifacts.TrialID = deterministicTrialID
 			artifacts.TrialAttempt = trialAttempt
@@ -147,8 +149,8 @@ func RunSuite(ctx context.Context, repoRoot, suiteID string, cfg RunConfig, opts
 				status = "failed"
 				taskFailed = true
 			}
-			o.emit("task %d/%d %q trial %d/%d %s (%s)",
-				taskIndex+1, len(tasks), task.ID,
+			o.emit("task %d/%d %q [%s] trial %d/%d %s (%s)",
+				taskIndex+1, len(tasks), task.ID, artifacts.Agent,
 				trialAttempt+1, suite.TrialsPerTask,
 				status, elapsed)
 		}
@@ -184,6 +186,15 @@ func resetOutputDir(path string) error {
 	return os.MkdirAll(path, 0o755)
 }
 
-func canonicalTrialID(suiteID string, suiteTaskIndex, trialAttempt int, taskID string) string {
-	return fmt.Sprintf("trial-%s-%03d-%02d-%s", suiteID, suiteTaskIndex, trialAttempt, taskID)
+func canonicalTrialID(suiteID string, agent Agent, suiteTaskIndex, trialAttempt int, taskID string) string {
+	return fmt.Sprintf("trial-%s-%s-%03d-%02d-%s", suiteID, agent, suiteTaskIndex, trialAttempt, taskID)
+}
+
+func suiteUsesClnku(tasks []Task, suite Suite, cfg RunConfig) bool {
+	for _, task := range tasks {
+		if EffectiveAgent(task.Agent, suite.Agent, cfg.Agent) == AgentClnku {
+			return true
+		}
+	}
+	return false
 }

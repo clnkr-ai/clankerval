@@ -92,7 +92,7 @@ func TestTranscriptCommandTrace(t *testing.T) {
 		task := graderTask(true, true, true, false, []string{"printf 'hello\\n' > note.txt"}, []int{0}, 0)
 		result, err := GradeTranscriptCommandTrace(task, RunArtifacts{
 			Mode:     ModeMockProvider,
-			EventLog: traceEventLog(t, []string{"printf 'hello\\n' > note.txt"}, []int{0}),
+			Commands: traceCommands(t, []string{"printf 'hello\\n' > note.txt"}, []int{0}),
 		})
 		if err != nil {
 			t.Fatalf("GradeTranscriptCommandTrace(): %v", err)
@@ -112,23 +112,11 @@ func TestTranscriptCommandTrace(t *testing.T) {
 		}
 	})
 
-	t.Run("mock-provider mode ignores command_start text and uses command_done payloads", func(t *testing.T) {
+	t.Run("mock-provider mode uses command records", func(t *testing.T) {
 		task := graderTask(true, true, true, false, []string{"printf hi > note.txt"}, []int{0}, 0)
 		result, err := GradeTranscriptCommandTrace(task, RunArtifacts{
-			Mode: ModeMockProvider,
-			EventLog: jsonLine(t, eventEnvelope{
-				Type: "command_start",
-				Payload: json.RawMessage(mustJSON(t, commandStartEvent{
-					Command: "pwd",
-					Dir:     "/tmp/work",
-				})),
-			}) + jsonLine(t, eventEnvelope{
-				Type: "command_done",
-				Payload: json.RawMessage(mustJSON(t, commandDoneEvent{
-					Command:  "printf hi > note.txt",
-					ExitCode: 0,
-				})),
-			}),
+			Mode:     ModeMockProvider,
+			Commands: traceCommands(t, []string{"printf hi > note.txt"}, []int{0}),
 		})
 		if err != nil {
 			t.Fatalf("GradeTranscriptCommandTrace(): %v", err)
@@ -149,7 +137,7 @@ func TestTranscriptCommandTrace(t *testing.T) {
 		task := graderTask(true, true, true, false, []string{"printf 'hello\\n' > note.txt"}, []int{0}, 0)
 		result, err := GradeTranscriptCommandTrace(task, RunArtifacts{
 			Mode:     ModeMockProvider,
-			EventLog: traceEventLog(t, []string{"printf 'hello\\n' > ./note.txt"}, []int{0}),
+			Commands: traceCommands(t, []string{"printf 'hello\\n' > ./note.txt"}, []int{0}),
 		})
 		if err != nil {
 			t.Fatalf("GradeTranscriptCommandTrace(): %v", err)
@@ -166,7 +154,7 @@ func TestTranscriptCommandTrace(t *testing.T) {
 		task := graderTask(true, true, true, false, []string{"printf 'hello\\n' > note.txt"}, []int{0}, 0)
 		result, err := GradeTranscriptCommandTrace(task, RunArtifacts{
 			Mode:     ModeMockProvider,
-			EventLog: traceEventLog(t, []string{"printf 'hello\\n' > note.txt"}, []int{1}),
+			Commands: traceCommands(t, []string{"printf 'hello\\n' > note.txt"}, []int{1}),
 		})
 		if err != nil {
 			t.Fatalf("GradeTranscriptCommandTrace(): %v", err)
@@ -183,7 +171,7 @@ func TestTranscriptCommandTrace(t *testing.T) {
 		task := graderTask(true, true, true, false, []string{"printf 'hello\\n' > note.txt"}, []int{0}, 0)
 		result, err := GradeTranscriptCommandTrace(task, RunArtifacts{
 			Mode: ModeMockProvider,
-			EventLog: traceEventLog(t, []string{
+			Commands: traceCommands(t, []string{
 				"pwd",
 				"printf 'hello\\n' > note.txt",
 			}, []int{0, 0}),
@@ -203,7 +191,7 @@ func TestTranscriptCommandTrace(t *testing.T) {
 		task := graderTask(true, true, true, false, []string{"ignored"}, []int{0}, 3)
 		result, err := GradeTranscriptCommandTrace(task, RunArtifacts{
 			Mode:     ModeLiveProvider,
-			EventLog: traceEventLog(t, []string{"printf 'hello\\n' > ./note.txt"}, []int{0}),
+			Commands: traceCommands(t, []string{"printf 'hello\\n' > ./note.txt"}, []int{0}),
 		})
 		if err != nil {
 			t.Fatalf("GradeTranscriptCommandTrace(): %v", err)
@@ -217,7 +205,7 @@ func TestTranscriptCommandTrace(t *testing.T) {
 		task := graderTask(true, true, true, false, []string{"ignored"}, []int{0}, 1)
 		result, err := GradeTranscriptCommandTrace(task, RunArtifacts{
 			Mode: ModeLiveProvider,
-			EventLog: traceEventLog(t, []string{
+			Commands: traceCommands(t, []string{
 				"pwd",
 				"printf 'hello\\n' > note.txt",
 			}, []int{0, 0}),
@@ -237,7 +225,7 @@ func TestTranscriptCommandTrace(t *testing.T) {
 		task := graderTask(true, true, true, false, []string{"ignored"}, []int{0}, 3)
 		result, err := GradeTranscriptCommandTrace(task, RunArtifacts{
 			Mode:     ModeLiveProvider,
-			EventLog: traceEventLog(t, []string{"pwd"}, []int{1}),
+			Commands: traceCommands(t, []string{"pwd"}, []int{1}),
 		})
 		if err != nil {
 			t.Fatalf("GradeTranscriptCommandTrace(): %v", err)
@@ -247,6 +235,42 @@ func TestTranscriptCommandTrace(t *testing.T) {
 		}
 		if !strings.Contains(result.Message, "unexpected exit code") {
 			t.Fatalf("message = %q, want unexpected exit code mismatch", result.Message)
+		}
+	})
+}
+
+func TestTranscriptCommandTraceFromCommands(t *testing.T) {
+	t.Run("mock-provider uses Commands instead of EventLog", func(t *testing.T) {
+		task := graderTask(true, true, true, false, []string{"printf 'hello\\n' > note.txt"}, []int{0}, 0)
+		result, err := GradeTranscriptCommandTrace(task, RunArtifacts{
+			Mode:     ModeMockProvider,
+			EventLog: "", // intentionally empty
+			Commands: []CommandRecord{
+				{Command: "printf 'hello\\n' > note.txt", ExitCode: 0},
+			},
+		})
+		if err != nil {
+			t.Fatalf("GradeTranscriptCommandTrace(): %v", err)
+		}
+		if !result.Passed {
+			t.Fatalf("passed = false, want true: %#v", result)
+		}
+	})
+
+	t.Run("live-provider uses Commands for max count and exit codes", func(t *testing.T) {
+		task := graderTask(true, true, true, false, []string{"ignored"}, []int{0}, 3)
+		result, err := GradeTranscriptCommandTrace(task, RunArtifacts{
+			Mode:     ModeLiveProvider,
+			EventLog: "", // intentionally empty
+			Commands: []CommandRecord{
+				{Command: "printf 'hello\\n' > ./note.txt", ExitCode: 0},
+			},
+		})
+		if err != nil {
+			t.Fatalf("GradeTranscriptCommandTrace(): %v", err)
+		}
+		if !result.Passed {
+			t.Fatalf("passed = false, want true: %#v", result)
 		}
 	})
 }
@@ -627,6 +651,22 @@ func graderTask(outcomeEnabled, outcomeRequired, transcriptEnabled, transcriptRe
 			},
 		},
 	}
+}
+
+func traceCommands(t *testing.T, commands []string, exitCodes []int) []CommandRecord {
+	t.Helper()
+	if len(commands) != len(exitCodes) {
+		t.Fatalf("commands len = %d, exitCodes len = %d, want equal", len(commands), len(exitCodes))
+	}
+	records := make([]CommandRecord, len(commands))
+	for i, command := range commands {
+		records[i] = CommandRecord{
+			Command:  command,
+			Dir:      "/tmp/work",
+			ExitCode: exitCodes[i],
+		}
+	}
+	return records
 }
 
 func traceEventLog(t *testing.T, commands []string, exitCodes []int) string {

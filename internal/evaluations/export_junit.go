@@ -22,7 +22,7 @@ func ExportJUnit(report RunReport, dst string) error {
 			xmlEscape(task.TaskID), task.TrialCount, task.Failed, taskDurationSeconds(task))
 		for _, trial := range task.Trials {
 			_, _ = fmt.Fprintf(&buf, `    <testcase classname="%s" name="%s" time="%0.3f">`+"\n",
-				xmlEscape(report.SuiteID+"."+task.TaskID), xmlEscape(trial.TrialID), trialDurationSeconds(trial))
+				xmlEscape(report.SuiteID+"."+trial.Agent.ID+"."+task.TaskID), xmlEscape(trial.TrialID), trialDurationSeconds(trial))
 			if !trial.Passed {
 				message := trialFailureMessage(trial)
 				_, _ = fmt.Fprintf(&buf, `      <failure message="%s">`, xmlEscape(message))
