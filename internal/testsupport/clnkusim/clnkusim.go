@@ -310,7 +310,7 @@ func parseTurn(content string) (turnEnvelope, error) {
 }
 
 func runCommand(cwd, command string) (commandResult, error) {
-	cmd := exec.Command("sh", "-lc", command)
+	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = cwd
 	cmd.Env = os.Environ()
 

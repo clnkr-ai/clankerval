@@ -113,7 +113,12 @@ func TestRun(t *testing.T) {
 		stderr := &bytes.Buffer{}
 		pathEnv := filepath.Dir(stagedClnku) + string(os.PathListSeparator) + os.Getenv("PATH")
 		t.Setenv("PATH", pathEnv)
-		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID}, repoRoot, stdout, stderr, os.Getenv)
+		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID}, repoRoot, stdout, stderr, func(key string) string {
+			if key == "PATH" {
+				return pathEnv
+			}
+			return ""
+		})
 		if exitCode != 0 {
 			t.Fatalf("exit code = %d, want 0; stderr=%q", exitCode, stderr.String())
 		}

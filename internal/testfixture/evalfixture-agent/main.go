@@ -384,7 +384,7 @@ func nextAssistantTurn(systemPrompt string, messages []protocol.Message) (string
 }
 
 func runCommand(cwd, command string) (commandResult, string, error) {
-	cmd := exec.Command("sh", "-lc", command)
+	cmd := exec.Command("sh", "-c", command)
 	cmd.Dir = cwd
 	cmd.Env = os.Environ()
 
