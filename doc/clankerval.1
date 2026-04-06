@@ -2,7 +2,7 @@
 .TH clankerval 1 "clankerval" "User Commands"
 
 .SH NAME
-clankerval \- evaluation runner for clnkr-compatible agents
+clankerval \- evaluation runner for checked-in agent suites
 
 
 .SH SYNOPSIS
@@ -10,10 +10,13 @@ clankerval \- evaluation runner for clnkr-compatible agents
 
 
 .SH DESCRIPTION
-\fBclankerval\fP runs evaluation suites owned by a consuming project. It currently supports two commands: \fBrun\fP to execute a suite and \fBinit\fP to scaffold a default evaluations tree.
+\fBclankerval\fP loads checked-in evaluation suites, runs trial workspaces against an agent CLI, grades the result, and writes per-trial bundles plus run-level reports.
 
 .PP
-Rename note: \fBclankerval\fP is the canonical command name. \fBclnkeval\fP remains supported as a compatibility alias, and both commands accept the same flags.
+Today the runner supports two agent adapters: \fBclnku\fP and Claude Code. The canonical command name is \fBclankerval\fP\&. \fBclnkeval\fP remains supported as a compatibility alias, and both names accept the same flags.
+
+.PP
+The two top-level commands are \fBrun\fP and \fBinit\fP\&.
 
 
 .SH COMMANDS
@@ -32,8 +35,12 @@ Scaffold an \fBevaluations/\fP directory with the default live-provider example 
 Suite identifier to run. Defaults to \fBdefault\fP\&.
 
 .TP
+\fB--agent\fP \fIid\fP
+Default agent under test. Must be \fBclnku\fP or \fBclaude\fP\&. This is only the lowest-precedence selector. Effective agent resolution is \fBtask.agent\fP, then \fBsuite.agent\fP, then \fB--agent\fP\&. When no level sets an agent, the default is \fBclnku\fP\&.
+
+.TP
 \fB--binary\fP \fIpath\fP
-Path to the agent binary under test. When omitted, \fBclankerval\fP builds \fB\&./cmd/clnku\fP from the current source tree when present; otherwise it resolves \fBclnku\fP from \fBPATH\fP\&.
+Path to the \fBclnku\fP binary under test. When omitted, \fBclankerval\fP builds \fB\&./cmd/clnku\fP from the current source tree when present; otherwise it resolves \fBclnku\fP from \fBPATH\fP\&. Claude runs ignore this flag and resolve \fBclaude\fP from \fBPATH\fP instead.
 
 .TP
 \fB--evals-dir\fP \fIpath\fP
@@ -44,6 +51,91 @@ Evaluations directory. Defaults to \fB\&./evaluations\fP relative to the current
 Output directory for trial bundles and reports. Defaults to the evaluations directory.
 
 
+.SH EVALUATION FILES
+\fBclankerval init\fR creates this shape:
+
+.EX
+evaluations/
+  suites/
+    default/
+      suite.json
+      tasks/
+        001-example/
+          task.json
+          input/
+            instruction.txt
+.EE
+
+.TP
+\fBsuite.json\fP
+Declares \fBid\fP, \fBdescription\fP, \fBmode\fP, optional \fBagent\fP, \fBtrials_per_task\fP, \fBfailure_policy\fP, and the ordered task list.
+
+.TP
+\fBtask.json\fP
+Declares \fBinstruction_file\fP, \fBworking_directory\fP, \fBstep_limit\fP, \fBfull_send\fP, optional \fBseed_transcript_file\fP, optional \fBmode\fP, optional \fBagent\fP, optional \fBscripted_turns_file\fP, and grader configuration.
+
+.TP
+\fBscripted_turns_file\fP
+Required only for \fBmock-provider\fP tasks.
+
+.TP
+\fBinput/project/AGENTS.md\fP
+Project-local prompt file staged into the workspace for \fBclnku\fP tasks.
+
+.TP
+\fBinput/project/CLAUDE.md\fP
+Project-local prompt file staged into the workspace for Claude tasks.
+
+
+.SH ENVIRONMENT
+.TP
+\fBCLNKR_EVALUATION_MODE\fP
+Run mode. Must be \fBmock-provider\fP or \fBlive-provider\fP\&. Defaults to \fBmock-provider\fP when unset.
+
+.TP
+\fBCLNKR_EVALUATION_API_KEY\fP
+Required in \fBlive-provider\fP mode by the shared run-config contract.
+
+.TP
+\fBCLNKR_EVALUATION_BASE_URL\fP
+Required in \fBlive-provider\fP mode. Recorded in bundle metadata as the configured provider endpoint.
+
+.TP
+\fBCLNKR_EVALUATION_MODEL\fP
+Optional in \fBlive-provider\fP mode. Defaults to \fBgpt-5.4-nano\fP when unset. Recorded in bundle metadata as the configured provider model.
+
+.TP
+\fBANTHROPIC_API_KEY\fP
+Forwarded into Claude runs when present. In practice, Claude live runs need this set and need the \fBclaude\fP CLI on \fBPATH\fP\&.
+
+
+.SH OUTPUT
+Each trial writes a bundle under the selected output directory. Important artifacts include:
+.TP
+\fBbundle.json\fP
+Canonical bundle metadata, including suite, task, trial, mode, resolved agent, provider metadata, and artifact paths.
+
+.TP
+\fBraw/agent/\fP
+Native agent artifacts, for example \fBtrajectory.json\fP and \fBevents.jsonl\fP for \fBclnku\fP, or \fBtranscript.jsonl\fP and \fBresult.json\fP for Claude.
+
+.TP
+\fBraw/commands.jsonl\fP
+Agent-neutral command trace used by graders such as \fBtranscript_command_trace\fP\&.
+
+.TP
+\fBnormalized/transcript.jsonl\fP
+Canonical visible transcript events.
+
+.TP
+\fBnormalized/outcome.json\fP
+Canonical outcome record.
+
+.TP
+\fBnormalized/graders.jsonl\fP
+Normalized grader results.
+
+
 .SH EXAMPLES
 Run this repo's checked-in dummy self-test suite:
 
@@ -52,17 +144,43 @@ make evaluations
 .EE
 
 .PP
-Run a consuming project's own suite:
+Scaffold the default suite:
 
 .EX
+clankerval init
+.EE
+
+.PP
+Run a consuming project's suite against \fBclnku\fP:
+
+.EX
+export CLNKR_EVALUATION_MODE=live-provider
+export CLNKR_EVALUATION_API_KEY=your-api-key
+export CLNKR_EVALUATION_BASE_URL=https://api.openai.com/v1
+export CLNKR_EVALUATION_MODEL=gpt-5.4-nano
+
 clankerval run --suite default --binary /path/to/clnku
 .EE
 
 .PP
-Scaffold the default live-provider example suite:
+Run a consuming project's suite against Claude Code:
 
 .EX
-clankerval init
+export CLNKR_EVALUATION_MODE=live-provider
+export CLNKR_EVALUATION_API_KEY=placeholder
+export CLNKR_EVALUATION_BASE_URL=https://api.anthropic.com
+export CLNKR_EVALUATION_MODEL=claude-code-default
+export ANTHROPIC_API_KEY=your-anthropic-key
+
+clankerval run --suite default --agent claude
+.EE
+
+.PP
+Run the checked-in manual Claude smoke suite:
+
+.EX
+CLANKERVAL_CLAUDE_LIVE_SMOKE=1 \\
+go test ./internal/evaluations -run TestClaudeLiveSmokeSuite -count=1
 .EE
 
 .PP
