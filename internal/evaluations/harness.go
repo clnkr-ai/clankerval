@@ -235,8 +235,11 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 		"TZ=UTC",
 		"PATH=" + os.Getenv("PATH"),
 	}
+	env = appendEnvFromHostIfSet(env, "MISE_YES")
 	if artifacts.Agent == AgentClaude {
 		env = appendEnvFromHostIfSet(env, "ANTHROPIC_API_KEY")
+		env = appendEnvFromHostIfSet(env, "ANTHROPIC_BASE_URL")
+		env = appendEnvFromHostIfSet(env, "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS")
 	}
 
 	adapterReq := AdapterRequest{

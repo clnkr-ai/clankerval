@@ -782,6 +782,222 @@ func TestRunTrial(t *testing.T) {
 		}
 	})
 
+	t.Run("claude adapter receives anthropic base url from host env", func(t *testing.T) {
+		ctx := context.Background()
+		repoRoot := newTempRepoRoot(t)
+		harness := newHarnessForTests(t, ctx, repoRoot)
+		t.Setenv("ANTHROPIC_BASE_URL", "https://proxy.example.com")
+
+		fakeClaude := &fakeAdapter{
+			result: AdapterResult{
+				ExitCode:     0,
+				AgentVersion: "claude-test",
+				AgentCommand: []string{"claude", "--bare"},
+			},
+		}
+		harness.claudeAdapter = fakeClaude
+
+		suite, task := writeTempSuiteTask(t, repoRoot, "claude-base-url", map[string]string{
+			"input/instruction.txt":  "Say hello\n",
+			"input/model-turns.json": `["{\"type\":\"done\",\"summary\":\"hello\"}"]`,
+			"task.json": `{
+  "id": "claude-base-url",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "workspace",
+  "step_limit": 5,
+  "full_send": true,
+  "agent": "claude",
+  "graders": {
+    "outcome_workspace_snapshot": { "enabled": false, "required": false },
+    "transcript_command_trace": { "enabled": false, "required": false }
+  }
+}`,
+		})
+
+		if _, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider}); err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if !fakeClaude.called {
+			t.Fatal("claude adapter was not called")
+		}
+		if !envContains(fakeClaude.req.Env, "ANTHROPIC_BASE_URL", "https://proxy.example.com") {
+			t.Fatalf("adapter env missing ANTHROPIC_BASE_URL; env=%v", fakeClaude.req.Env)
+		}
+	})
+
+	t.Run("claude adapter receives disable experimental betas from host env", func(t *testing.T) {
+		ctx := context.Background()
+		repoRoot := newTempRepoRoot(t)
+		harness := newHarnessForTests(t, ctx, repoRoot)
+		t.Setenv("CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "1")
+
+		fakeClaude := &fakeAdapter{
+			result: AdapterResult{
+				ExitCode:     0,
+				AgentVersion: "claude-test",
+				AgentCommand: []string{"claude", "--bare"},
+			},
+		}
+		harness.claudeAdapter = fakeClaude
+
+		suite, task := writeTempSuiteTask(t, repoRoot, "claude-disable-betas", map[string]string{
+			"input/instruction.txt":  "Say hello\n",
+			"input/model-turns.json": `["{\"type\":\"done\",\"summary\":\"hello\"}"]`,
+			"task.json": `{
+  "id": "claude-disable-betas",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "workspace",
+  "step_limit": 5,
+  "full_send": true,
+  "agent": "claude",
+  "graders": {
+    "outcome_workspace_snapshot": { "enabled": false, "required": false },
+    "transcript_command_trace": { "enabled": false, "required": false }
+  }
+}`,
+		})
+
+		if _, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider}); err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if !fakeClaude.called {
+			t.Fatal("claude adapter was not called")
+		}
+		if !envContains(fakeClaude.req.Env, "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "1") {
+			t.Fatalf("adapter env missing CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS; env=%v", fakeClaude.req.Env)
+		}
+	})
+
+	t.Run("MISE_YES forwarded for clnku agent", func(t *testing.T) {
+		ctx := context.Background()
+		repoRoot := newTempRepoRoot(t)
+		harness := newHarnessForTests(t, ctx, repoRoot)
+		t.Setenv("MISE_YES", "1")
+
+		fake := &fakeAdapter{
+			result: AdapterResult{
+				ExitCode:     0,
+				AgentVersion: "fake-1.0",
+				AgentCommand: []string{"fake-agent", "run"},
+			},
+		}
+		harness.adapter = fake
+
+		suite, task := writeTempSuiteTask(t, repoRoot, "mise-yes-clnku", map[string]string{
+			"input/instruction.txt":  "do nothing\n",
+			"input/model-turns.json": `["{\"type\":\"done\",\"summary\":\"ok\"}"]`,
+			"task.json": `{
+  "id": "mise-yes-clnku",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "workspace",
+  "step_limit": 5,
+  "full_send": true,
+  "graders": {}
+}`,
+		})
+
+		if _, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider}); err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if !fake.called {
+			t.Fatal("adapter was not called")
+		}
+		if !envContains(fake.req.Env, "MISE_YES", "1") {
+			t.Fatalf("adapter env missing MISE_YES; env=%v", fake.req.Env)
+		}
+	})
+
+	t.Run("MISE_YES forwarded for claude agent", func(t *testing.T) {
+		ctx := context.Background()
+		repoRoot := newTempRepoRoot(t)
+		harness := newHarnessForTests(t, ctx, repoRoot)
+		t.Setenv("MISE_YES", "1")
+
+		fakeClaude := &fakeAdapter{
+			result: AdapterResult{
+				ExitCode:     0,
+				AgentVersion: "claude-test",
+				AgentCommand: []string{"claude", "--bare"},
+			},
+		}
+		harness.claudeAdapter = fakeClaude
+
+		suite, task := writeTempSuiteTask(t, repoRoot, "mise-yes-claude", map[string]string{
+			"input/instruction.txt":  "Say hello\n",
+			"input/model-turns.json": `["{\"type\":\"done\",\"summary\":\"hello\"}"]`,
+			"task.json": `{
+  "id": "mise-yes-claude",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "workspace",
+  "step_limit": 5,
+  "full_send": true,
+  "agent": "claude",
+  "graders": {
+    "outcome_workspace_snapshot": { "enabled": false, "required": false },
+    "transcript_command_trace": { "enabled": false, "required": false }
+  }
+}`,
+		})
+
+		if _, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider}); err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if !fakeClaude.called {
+			t.Fatal("claude adapter was not called")
+		}
+		if !envContains(fakeClaude.req.Env, "MISE_YES", "1") {
+			t.Fatalf("adapter env missing MISE_YES; env=%v", fakeClaude.req.Env)
+		}
+	})
+
+	t.Run("claude-only env vars not forwarded to clnku agent", func(t *testing.T) {
+		ctx := context.Background()
+		repoRoot := newTempRepoRoot(t)
+		harness := newHarnessForTests(t, ctx, repoRoot)
+		t.Setenv("ANTHROPIC_BASE_URL", "https://proxy.example.com")
+		t.Setenv("CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "1")
+
+		fake := &fakeAdapter{
+			result: AdapterResult{
+				ExitCode:     0,
+				AgentVersion: "fake-1.0",
+				AgentCommand: []string{"fake-agent", "run"},
+			},
+		}
+		harness.adapter = fake
+
+		suite, task := writeTempSuiteTask(t, repoRoot, "clnku-no-claude-env", map[string]string{
+			"input/instruction.txt":  "do nothing\n",
+			"input/model-turns.json": `["{\"type\":\"done\",\"summary\":\"ok\"}"]`,
+			"task.json": `{
+  "id": "clnku-no-claude-env",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "workspace",
+  "step_limit": 5,
+  "full_send": true,
+  "graders": {}
+}`,
+		})
+
+		if _, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider}); err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if !fake.called {
+			t.Fatal("adapter was not called")
+		}
+		if envContains(fake.req.Env, "ANTHROPIC_BASE_URL", "https://proxy.example.com") {
+			t.Fatalf("clnku adapter env should not contain ANTHROPIC_BASE_URL; env=%v", fake.req.Env)
+		}
+		if envContains(fake.req.Env, "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "1") {
+			t.Fatalf("clnku adapter env should not contain CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS; env=%v", fake.req.Env)
+		}
+	})
+
 	t.Run("claude trials do not require clnku binary setup", func(t *testing.T) {
 		ctx := context.Background()
 		repoRoot := newTempRepoRoot(t)
