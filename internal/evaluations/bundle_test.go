@@ -1,6 +1,7 @@
 package evaluations
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -223,7 +224,7 @@ func TestNormalizeOutcome(t *testing.T) {
 
 	artifacts := sampleRunArtifacts(t)
 
-	outcome, err := NormalizeOutcome(artifacts, filepath.ToSlash("outcome/workspace"))
+	outcome, err := NormalizeOutcome(artifacts)
 	if err != nil {
 		t.Fatalf("NormalizeOutcome(): %v", err)
 	}
@@ -234,17 +235,14 @@ func TestNormalizeOutcome(t *testing.T) {
 	if outcome.FinalCwd != "<WORKDIR>" {
 		t.Fatalf("FinalCwd = %q, want <WORKDIR>", outcome.FinalCwd)
 	}
-	if len(outcome.WorkspaceFiles) != 1 {
-		t.Fatalf("workspace file count = %d, want 1", len(outcome.WorkspaceFiles))
+	if !outcome.DiffPresent {
+		t.Fatal("DiffPresent = false, want true")
 	}
-	if outcome.WorkspaceFiles[0].Path != "note.txt" {
-		t.Fatalf("workspace file path = %q, want note.txt", outcome.WorkspaceFiles[0].Path)
+	if !reflect.DeepEqual(outcome.ChangedPaths, []string{"note.txt"}) {
+		t.Fatalf("ChangedPaths = %#v, want [note.txt]", outcome.ChangedPaths)
 	}
-	if outcome.WorkspaceFiles[0].SHA256 != checksumSHA256String("hello\n") {
-		t.Fatalf("workspace file sha256 = %q, want %q", outcome.WorkspaceFiles[0].SHA256, checksumSHA256String("hello\n"))
-	}
-	if !reflect.DeepEqual(outcome.MaterializedPaths, []string{"outcome/workspace/note.txt"}) {
-		t.Fatalf("materialized paths = %#v, want %#v", outcome.MaterializedPaths, []string{"outcome/workspace/note.txt"})
+	if outcome.ChangedFileCount != 1 {
+		t.Fatalf("ChangedFileCount = %d, want 1", outcome.ChangedFileCount)
 	}
 }
 
@@ -262,8 +260,8 @@ func TestWriteTrialBundle(t *testing.T) {
 	if bundle.Root != root {
 		t.Fatalf("bundle root = %q, want %q", bundle.Root, root)
 	}
-	if bundle.SchemaVersion != "2" {
-		t.Fatalf("bundle schema version = %q, want %q", bundle.SchemaVersion, "2")
+	if bundle.SchemaVersion != "3" {
+		t.Fatalf("bundle schema version = %q, want %q", bundle.SchemaVersion, "3")
 	}
 	if bundle.Agent.ID != string(AgentClnku) {
 		t.Fatalf("bundle agent id = %q, want %q", bundle.Agent.ID, AgentClnku)
@@ -275,7 +273,7 @@ func TestWriteTrialBundle(t *testing.T) {
 		t.Fatalf("bundle provider model = %q, want %q", bundle.Provider.Model, artifacts.ProviderModel)
 	}
 
-	// Schema v2: raw/agent/ dir and raw/commands.jsonl replace raw/transcript.json and raw/events.jsonl.
+	// Schema v3: raw/agent/ dir and raw/commands.jsonl replace raw/transcript.json and raw/events.jsonl.
 	for _, rel := range []string{
 		"bundle.json",
 		"raw/agent",
@@ -285,18 +283,45 @@ func TestWriteTrialBundle(t *testing.T) {
 		"normalized/transcript.jsonl",
 		"normalized/outcome.json",
 		"normalized/graders.jsonl",
-		"outcome/workspace/note.txt",
+		"outcome/diff.patch",
+		"outcome/name-status.txt",
+		"outcome/numstat.txt",
 	} {
 		path := filepath.Join(root, filepath.FromSlash(rel))
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("Stat(%q): %v", path, err)
 		}
 	}
-	// Schema v2: old raw artifacts must not exist.
+	if got, err := os.ReadFile(filepath.Join(root, "outcome", "diff.patch")); err != nil {
+		t.Fatalf("ReadFile(outcome/diff.patch): %v", err)
+	} else if string(got) != artifacts.GitDiff {
+		t.Fatalf("outcome diff = %q, want %q", string(got), artifacts.GitDiff)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "outcome", "name-status.txt")); err != nil {
+		t.Fatalf("ReadFile(outcome/name-status.txt): %v", err)
+	} else if string(got) != artifacts.GitNameStatus {
+		t.Fatalf("outcome name-status = %q, want %q", string(got), artifacts.GitNameStatus)
+	}
+	if got, err := os.ReadFile(filepath.Join(root, "outcome", "numstat.txt")); err != nil {
+		t.Fatalf("ReadFile(outcome/numstat.txt): %v", err)
+	} else if string(got) != artifacts.GitNumstat {
+		t.Fatalf("outcome numstat = %q, want %q", string(got), artifacts.GitNumstat)
+	}
+	if bundle.Artifacts.OutcomeDiff != "outcome/diff.patch" {
+		t.Fatalf("outcome diff path = %q, want outcome/diff.patch", bundle.Artifacts.OutcomeDiff)
+	}
+	if bundle.Artifacts.OutcomeNameStatus != "outcome/name-status.txt" {
+		t.Fatalf("outcome name-status path = %q, want outcome/name-status.txt", bundle.Artifacts.OutcomeNameStatus)
+	}
+	if bundle.Artifacts.OutcomeNumstat != "outcome/numstat.txt" {
+		t.Fatalf("outcome numstat path = %q, want outcome/numstat.txt", bundle.Artifacts.OutcomeNumstat)
+	}
+
+	// Schema v3: old raw artifacts must not exist.
 	for _, rel := range []string{"raw/transcript.json", "raw/events.jsonl"} {
 		path := filepath.Join(root, filepath.FromSlash(rel))
 		if _, err := os.Stat(path); err == nil {
-			t.Fatalf("old artifact %q still exists under schema v2", rel)
+			t.Fatalf("old artifact %q still exists under schema v3", rel)
 		}
 	}
 
@@ -341,10 +366,10 @@ func TestWriteTrialBundlePersistsTrialStatus(t *testing.T) {
 	artifacts.TrialPassed = true
 	artifacts.FailedRequiredGraders = []GraderResult{
 		{
-			GraderID:   "outcome_workspace_snapshot",
+			GraderID:   "outcome_diff",
 			TargetKind: "outcome",
 			Passed:     false,
-			Message:    "missing note.txt",
+			Message:    "missing diff",
 		},
 	}
 	root := filepath.Join(t.TempDir(), artifacts.TrialID)
@@ -364,7 +389,7 @@ func TestWriteTrialBundlePersistsTrialStatus(t *testing.T) {
 	if !loaded.TrialPassed {
 		t.Fatal("loaded trial_passed = false, want true")
 	}
-	if len(loaded.FailedRequiredGraders) != 1 || loaded.FailedRequiredGraders[0].GraderID != "outcome_workspace_snapshot" {
+	if len(loaded.FailedRequiredGraders) != 1 || loaded.FailedRequiredGraders[0].GraderID != "outcome_diff" {
 		t.Fatalf("loaded failed required graders = %#v, want outcome failure", loaded.FailedRequiredGraders)
 	}
 }
@@ -393,23 +418,27 @@ func TestWriteTrialBundlePreservesRuntimeStyleProviderResponsesVerbatim(t *testi
 	}
 }
 
-func TestWriteTrialBundleCreatesEmptyWorkspaceDirectory(t *testing.T) {
+func TestWriteTrialBundleCreatesEmptyOutcomeArtifactFiles(t *testing.T) {
 	t.Parallel()
 
 	artifacts := sampleRunArtifacts(t)
-	artifacts.Workspace = map[string]string{}
+	artifacts.GitDiff = ""
+	artifacts.GitNameStatus = ""
+	artifacts.GitNumstat = ""
 	root := filepath.Join(t.TempDir(), artifacts.TrialID)
 
 	if _, err := WriteTrialBundle(root, artifacts, nil); err != nil {
 		t.Fatalf("WriteTrialBundle(): %v", err)
 	}
 
-	info, err := os.Stat(filepath.Join(root, "outcome", "workspace"))
-	if err != nil {
-		t.Fatalf("Stat(outcome/workspace): %v", err)
-	}
-	if !info.IsDir() {
-		t.Fatalf("outcome/workspace mode = %v, want directory", info.Mode())
+	for _, rel := range []string{"outcome/diff.patch", "outcome/name-status.txt", "outcome/numstat.txt"} {
+		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatalf("Stat(%s): %v", rel, err)
+		}
+		if info.Size() != 0 {
+			t.Fatalf("%s size = %d, want 0", rel, info.Size())
+		}
 	}
 }
 
@@ -456,6 +485,15 @@ func TestLoadBundle(t *testing.T) {
 	}
 	if outcome.FinalCwd != "<WORKDIR>" {
 		t.Fatalf("loaded final cwd = %q, want <WORKDIR>", outcome.FinalCwd)
+	}
+	if !outcome.DiffPresent {
+		t.Fatal("loaded diff_present = false, want true")
+	}
+	if !reflect.DeepEqual(outcome.ChangedPaths, []string{"note.txt"}) {
+		t.Fatalf("loaded changed paths = %#v, want [note.txt]", outcome.ChangedPaths)
+	}
+	if outcome.ChangedFileCount != 1 {
+		t.Fatalf("loaded changed file count = %d, want 1", outcome.ChangedFileCount)
 	}
 
 	graders, err := loaded.ReadGraders()
@@ -539,6 +577,163 @@ func TestLoadBundleRejectsSymlinkEscapeWithMissingDescendants(t *testing.T) {
 	_, err = LoadBundle(root)
 	if err == nil || !strings.Contains(err.Error(), "escapes bundle root") {
 		t.Fatalf("LoadBundle() error = %v, want symlink ancestor escape rejection", err)
+	}
+}
+
+func TestLoadBundleRejectsMissingGitOutcomeArtifact(t *testing.T) {
+	t.Parallel()
+
+	artifacts := sampleRunArtifacts(t)
+	root := filepath.Join(t.TempDir(), artifacts.TrialID)
+	if _, err := WriteTrialBundle(root, artifacts, nil); err != nil {
+		t.Fatalf("WriteTrialBundle(): %v", err)
+	}
+
+	missing := filepath.Join(root, "outcome", "name-status.txt")
+	if err := os.Remove(missing); err != nil {
+		t.Fatalf("Remove(%q): %v", missing, err)
+	}
+
+	_, err := LoadBundle(root)
+	if err == nil || !strings.Contains(err.Error(), "outcome/name-status.txt") {
+		t.Fatalf("LoadBundle() error = %v, want missing git outcome artifact rejection", err)
+	}
+}
+
+func TestPreflightRepoRootAcceptsSymlinkedTopLevel(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		if _, stderr, exitCode, err := runCommand(context.Background(), repoRoot, repoGitEnv(), "git", args...); err != nil || exitCode != 0 {
+			t.Fatalf("git %v: exit=%d err=%v stderr=%q", args, exitCode, err, stderr)
+		}
+	}
+
+	runGit("init", "-q")
+	runGit("config", "user.email", "test@example.com")
+	runGit("config", "user.name", "Test")
+	if err := os.WriteFile(filepath.Join(repoRoot, "tracked.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(tracked.txt): %v", err)
+	}
+	runGit("add", "tracked.txt")
+	runGit("commit", "-q", "-m", "base")
+
+	linkRoot := filepath.Join(t.TempDir(), "repo-link")
+	if err := os.Symlink(repoRoot, linkRoot); err != nil {
+		t.Fatalf("Symlink(%q -> %q): %v", linkRoot, repoRoot, err)
+	}
+
+	h := &Harness{repoRoot: linkRoot}
+	if err := h.preflightRepoRoot(context.Background()); err != nil {
+		t.Fatalf("preflightRepoRoot(): %v", err)
+	}
+}
+
+func TestNormalizeOutcomeUnquotesGitPaths(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		if _, stderr, exitCode, err := runCommand(context.Background(), repoRoot, repoGitEnv(), "git", args...); err != nil || exitCode != 0 {
+			t.Fatalf("git %v: exit=%d err=%v stderr=%q", args, exitCode, err, stderr)
+		}
+	}
+
+	runGit("init", "-q")
+	runGit("config", "user.email", "test@example.com")
+	runGit("config", "user.name", "Test")
+	runGit("config", "diff.renames", "true")
+	if err := os.WriteFile(filepath.Join(repoRoot, "base.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(base.txt): %v", err)
+	}
+	runGit("add", "base.txt")
+	runGit("commit", "-q", "-m", "base")
+	tabPath := filepath.Join(repoRoot, "tab\tname.txt")
+	if err := os.WriteFile(tabPath, []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(tab path): %v", err)
+	}
+	runGit("add", "-N", "--", filepath.Base(tabPath))
+
+	indexPath, err := repoGitIndexPath(context.Background(), repoRoot)
+	if err != nil {
+		t.Fatalf("repoGitIndexPath(): %v", err)
+	}
+
+	artifacts := RunArtifacts{
+		TranscriptEvents: []TranscriptEvent{{Kind: "state_update", Cwd: repoRoot}},
+		ExitCode:         0,
+	}
+	if err := captureGitDiffArtifacts(context.Background(), repoRoot, indexPath, &artifacts); err != nil {
+		t.Fatalf("captureGitDiffArtifacts(): %v", err)
+	}
+
+	outcome, err := NormalizeOutcome(artifacts)
+	if err != nil {
+		t.Fatalf("NormalizeOutcome(): %v", err)
+	}
+	wantPath := filepath.ToSlash("tab\tname.txt")
+	if !reflect.DeepEqual(outcome.ChangedPaths, []string{wantPath}) {
+		t.Fatalf("ChangedPaths = %#v, want [%q]", outcome.ChangedPaths, wantPath)
+	}
+	if outcome.ChangedFileCount != 1 {
+		t.Fatalf("ChangedFileCount = %d, want 1", outcome.ChangedFileCount)
+	}
+}
+
+func TestCaptureGitDiffArtifactsDisablesRenameDetection(t *testing.T) {
+	t.Parallel()
+
+	repoRoot := t.TempDir()
+	runGit := func(args ...string) {
+		t.Helper()
+		if _, stderr, exitCode, err := runCommand(context.Background(), repoRoot, repoGitEnv(), "git", args...); err != nil || exitCode != 0 {
+			t.Fatalf("git %v: exit=%d err=%v stderr=%q", args, exitCode, err, stderr)
+		}
+	}
+
+	runGit("init", "-q")
+	runGit("config", "user.email", "test@example.com")
+	runGit("config", "user.name", "Test")
+	runGit("config", "diff.renames", "true")
+	if err := os.WriteFile(filepath.Join(repoRoot, "a.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile(a.txt): %v", err)
+	}
+	runGit("add", "a.txt")
+	runGit("commit", "-q", "-m", "base")
+	runGit("mv", "a.txt", "b.txt")
+
+	indexPath, err := repoGitIndexPath(context.Background(), repoRoot)
+	if err != nil {
+		t.Fatalf("repoGitIndexPath(): %v", err)
+	}
+
+	artifacts := RunArtifacts{
+		TranscriptEvents: []TranscriptEvent{{Kind: "state_update", Cwd: repoRoot}},
+		ExitCode:         0,
+	}
+	if err := captureGitDiffArtifacts(context.Background(), repoRoot, indexPath, &artifacts); err != nil {
+		t.Fatalf("captureGitDiffArtifacts(): %v", err)
+	}
+
+	if strings.Contains(artifacts.GitNameStatus, "R100") || strings.Contains(artifacts.GitNumstat, "=>") {
+		t.Fatalf("rename-aware diff leaked into captured artifacts: name-status=%q numstat=%q", artifacts.GitNameStatus, artifacts.GitNumstat)
+	}
+
+	outcome, err := NormalizeOutcome(artifacts)
+	if err != nil {
+		t.Fatalf("NormalizeOutcome(): %v", err)
+	}
+	if !outcome.DiffPresent {
+		t.Fatal("DiffPresent = false, want true")
+	}
+	if !reflect.DeepEqual(outcome.ChangedPaths, []string{"a.txt", "b.txt"}) {
+		t.Fatalf("ChangedPaths = %#v, want [a.txt b.txt]", outcome.ChangedPaths)
+	}
+	if outcome.ChangedFileCount != 2 {
+		t.Fatalf("ChangedFileCount = %d, want 2", outcome.ChangedFileCount)
 	}
 }
 
@@ -653,9 +848,9 @@ func sampleRunArtifacts(t *testing.T) RunArtifacts {
 		ProviderResponses: []string{
 			`{"choices":[{"message":{"role":"assistant","content":"{\"type\":\"act\",\"command\":\"` + command + `\"}"}}]}`,
 		},
-		Workspace: map[string]string{
-			"note.txt": "hello\n",
-		},
+		GitDiff:       "diff --git a/note.txt b/note.txt\n",
+		GitNameStatus: "M\tnote.txt\n",
+		GitNumstat:    "1\t0\tnote.txt\n",
 		WorkspaceRoot: workspaceDir,
 		HomeDir:       homeDir,
 		ConfigDir:     configDir,

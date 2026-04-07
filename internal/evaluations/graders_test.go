@@ -3,86 +3,69 @@ package evaluations
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
 
-func TestOutcomeWorkspaceSnapshot(t *testing.T) {
-	t.Run("matches expected files by relative path and bytes only", func(t *testing.T) {
-		taskRoot := t.TempDir()
-		writeWorkspaceFile(t, filepath.Join(taskRoot, "expected", "workspace", "note.txt"), "hello\n", 0o755)
-		if err := os.MkdirAll(filepath.Join(taskRoot, "expected", "workspace", "empty", "nested"), 0o755); err != nil {
-			t.Fatalf("MkdirAll(empty dirs): %v", err)
-		}
-
-		result, err := GradeOutcomeWorkspaceSnapshot(Task{}, RunArtifacts{
-			TaskRoot: taskRoot,
-			Workspace: map[string]string{
-				"note.txt": "hello\n",
-			},
+func TestOutcomeDiff(t *testing.T) {
+	t.Run("passes when git diff is present", func(t *testing.T) {
+		rawDiff := "  diff --git a/note.txt b/note.txt\n"
+		result, err := GradeOutcomeDiff(Task{}, RunArtifacts{
+			GitDiff: rawDiff,
 		})
 		if err != nil {
-			t.Fatalf("GradeOutcomeWorkspaceSnapshot(): %v", err)
-		}
-		if result.GraderID != outcomeWorkspaceSnapshotGraderID {
-			t.Fatalf("grader id = %q, want %q", result.GraderID, outcomeWorkspaceSnapshotGraderID)
-		}
-		if result.TargetKind != graderTargetOutcome {
-			t.Fatalf("target kind = %q, want %q", result.TargetKind, graderTargetOutcome)
+			t.Fatalf("GradeOutcomeDiff(): %v", err)
 		}
 		if !result.Passed {
 			t.Fatalf("passed = false, want true: %#v", result)
 		}
-		evidence, ok := result.Evidence.(WorkspaceSnapshotEvidence)
-		if !ok {
-			t.Fatalf("evidence type = %T, want WorkspaceSnapshotEvidence", result.Evidence)
+		if result.GraderID != outcomeDiffGraderID {
+			t.Fatalf("grader id = %q, want %q", result.GraderID, outcomeDiffGraderID)
 		}
-		if len(evidence.Missing) != 0 || len(evidence.Unexpected) != 0 || len(evidence.Mismatched) != 0 {
-			t.Fatalf("evidence = %#v, want no diffs", evidence)
+		if result.TargetKind != graderTargetOutcome {
+			t.Fatalf("target kind = %q, want %q", result.TargetKind, graderTargetOutcome)
+		}
+		evidence, ok := result.Evidence.(OutcomeDiffEvidence)
+		if !ok {
+			t.Fatalf("evidence type = %T, want OutcomeDiffEvidence", result.Evidence)
+		}
+		if !evidence.HasDiff {
+			t.Fatalf("evidence.HasDiff = false, want true: %#v", evidence)
+		}
+		if evidence.DiffSize != len(rawDiff) {
+			t.Fatalf("evidence.DiffSize = %d, want %d", evidence.DiffSize, len(rawDiff))
+		}
+		if !strings.Contains(result.Message, "byte diff") || !strings.Contains(result.Message, fmt.Sprintf("%d", len(rawDiff))) {
+			t.Fatalf("message = %q, want raw byte count", result.Message)
 		}
 	})
 
-	t.Run("reports missing, unexpected, and mismatched files", func(t *testing.T) {
-		taskRoot := t.TempDir()
-		writeWorkspaceFile(t, filepath.Join(taskRoot, "expected", "workspace", "keep.txt"), "keep\n", 0o644)
-		writeWorkspaceFile(t, filepath.Join(taskRoot, "expected", "workspace", "mismatch.txt"), "expected\n", 0o644)
-		if err := os.MkdirAll(filepath.Join(taskRoot, "expected", "workspace", "empty", "dir"), 0o755); err != nil {
-			t.Fatalf("MkdirAll(empty dirs): %v", err)
-		}
-
-		result, err := GradeOutcomeWorkspaceSnapshot(Task{}, RunArtifacts{
-			TaskRoot: taskRoot,
-			Workspace: map[string]string{
-				"mismatch.txt": "actual\n",
-				"extra.txt":    "extra\n",
-			},
+	t.Run("fails when git diff is empty", func(t *testing.T) {
+		rawDiff := "   \n"
+		result, err := GradeOutcomeDiff(Task{}, RunArtifacts{
+			GitDiff: rawDiff,
 		})
 		if err != nil {
-			t.Fatalf("GradeOutcomeWorkspaceSnapshot(): %v", err)
+			t.Fatalf("GradeOutcomeDiff(): %v", err)
 		}
 		if result.Passed {
 			t.Fatalf("passed = true, want false: %#v", result)
 		}
-		evidence, ok := result.Evidence.(WorkspaceSnapshotEvidence)
+		if !strings.Contains(result.Message, "no diff") {
+			t.Fatalf("message = %q, want no-diff failure", result.Message)
+		}
+		evidence, ok := result.Evidence.(OutcomeDiffEvidence)
 		if !ok {
-			t.Fatalf("evidence type = %T, want WorkspaceSnapshotEvidence", result.Evidence)
+			t.Fatalf("evidence type = %T, want OutcomeDiffEvidence", result.Evidence)
 		}
-		if got, want := strings.Join(evidence.Missing, ","), "keep.txt"; got != want {
-			t.Fatalf("missing = %q, want %q", got, want)
+		if evidence.HasDiff {
+			t.Fatalf("evidence.HasDiff = true, want false: %#v", evidence)
 		}
-		if got, want := strings.Join(evidence.Unexpected, ","), "extra.txt"; got != want {
-			t.Fatalf("unexpected = %q, want %q", got, want)
-		}
-		if len(evidence.Mismatched) != 1 || evidence.Mismatched[0].Path != "mismatch.txt" {
-			t.Fatalf("mismatched = %#v, want one mismatch for mismatch.txt", evidence.Mismatched)
-		}
-		if evidence.Mismatched[0].ExpectedSHA256 == evidence.Mismatched[0].ActualSHA256 {
-			t.Fatalf("mismatch sha256 should differ: %#v", evidence.Mismatched[0])
-		}
-		if !strings.Contains(result.Message, "missing files") || !strings.Contains(result.Message, "unexpected files") || !strings.Contains(result.Message, "mismatched files") {
-			t.Fatalf("message = %q, want all diff categories", result.Message)
+		if evidence.DiffSize != len(rawDiff) {
+			t.Fatalf("evidence.DiffSize = %d, want %d", evidence.DiffSize, len(rawDiff))
 		}
 	})
 }
@@ -280,7 +263,7 @@ func TestEvaluateTaskPassPolicy(t *testing.T) {
 		task := graderTask(true, true, false, true, nil, nil, 0)
 		result := EvaluateTaskPassPolicy(task, []GraderResult{
 			{
-				GraderID:   outcomeWorkspaceSnapshotGraderID,
+				GraderID:   outcomeDiffGraderID,
 				TargetKind: graderTargetOutcome,
 				Passed:     true,
 			},
@@ -297,7 +280,7 @@ func TestEvaluateTaskPassPolicy(t *testing.T) {
 		task := graderTask(true, true, true, false, nil, nil, 0)
 		result := EvaluateTaskPassPolicy(task, []GraderResult{
 			{
-				GraderID:   outcomeWorkspaceSnapshotGraderID,
+				GraderID:   outcomeDiffGraderID,
 				TargetKind: graderTargetOutcome,
 				Passed:     true,
 			},
@@ -320,7 +303,7 @@ func TestEvaluateTaskPassPolicy(t *testing.T) {
 		task := graderTask(true, true, true, true, nil, nil, 0)
 		result := EvaluateTaskPassPolicy(task, []GraderResult{
 			{
-				GraderID:   outcomeWorkspaceSnapshotGraderID,
+				GraderID:   outcomeDiffGraderID,
 				TargetKind: graderTargetOutcome,
 				Passed:     true,
 			},
@@ -341,13 +324,14 @@ func TestEvaluateTaskPassPolicy(t *testing.T) {
 
 	t.Run("grader record schema shape", func(t *testing.T) {
 		raw, err := json.Marshal(GraderResult{
-			GraderID:   outcomeWorkspaceSnapshotGraderID,
+			GraderID:   outcomeDiffGraderID,
 			TargetKind: graderTargetOutcome,
 			Passed:     true,
-			Evidence: WorkspaceSnapshotEvidence{
-				Missing: []string{},
+			Evidence: OutcomeDiffEvidence{
+				DiffSize: 12,
+				HasDiff:  true,
 			},
-			Message: "workspace matches",
+			Message: "diff matches",
 		})
 		if err != nil {
 			t.Fatalf("json.Marshal(): %v", err)
@@ -362,6 +346,15 @@ func TestEvaluateTaskPassPolicy(t *testing.T) {
 				t.Fatalf("json keys = %#v, missing %q", got, key)
 			}
 		}
+		evidence, ok := got["evidence"].(map[string]any)
+		if !ok {
+			t.Fatalf("evidence type = %T, want map", got["evidence"])
+		}
+		for _, key := range []string{"diff_size", "has_diff"} {
+			if _, ok := evidence[key]; !ok {
+				t.Fatalf("evidence keys = %#v, missing %q", evidence, key)
+			}
+		}
 		if _, ok := got["score"]; ok {
 			t.Fatalf("json keys = %#v, score should be omitted when nil", got)
 		}
@@ -370,8 +363,7 @@ func TestEvaluateTaskPassPolicy(t *testing.T) {
 	t.Run("required command output grader failure fails task", func(t *testing.T) {
 		task := Task{
 			Graders: GraderConfig{
-				OutcomeWorkspaceSnapshot: OutcomeWorkspaceSnapshotConfig{Enabled: false},
-				TranscriptCommandTrace:   TranscriptCommandTraceConfig{Enabled: false},
+				TranscriptCommandTrace: TranscriptCommandTraceConfig{Enabled: false},
 				OutcomeCommandOutput: OutcomeCommandOutputConfig{
 					Enabled:  true,
 					Required: true,
@@ -620,8 +612,7 @@ func graderTaskWithCommandOutput(
 ) Task {
 	return Task{
 		Graders: GraderConfig{
-			OutcomeWorkspaceSnapshot: OutcomeWorkspaceSnapshotConfig{Enabled: false},
-			TranscriptCommandTrace:   TranscriptCommandTraceConfig{Enabled: false},
+			TranscriptCommandTrace: TranscriptCommandTraceConfig{Enabled: false},
 			OutcomeCommandOutput: OutcomeCommandOutputConfig{
 				Enabled:              cmdEnabled,
 				Required:             cmdRequired,
@@ -638,7 +629,7 @@ func graderTaskWithCommandOutput(
 func graderTask(outcomeEnabled, outcomeRequired, transcriptEnabled, transcriptRequired bool, expectedCommands []string, expectedExitCodes []int, maxCommandCount int) Task {
 	return Task{
 		Graders: GraderConfig{
-			OutcomeWorkspaceSnapshot: OutcomeWorkspaceSnapshotConfig{
+			OutcomeDiff: OutcomeDiffConfig{
 				Enabled:  outcomeEnabled,
 				Required: outcomeRequired,
 			},

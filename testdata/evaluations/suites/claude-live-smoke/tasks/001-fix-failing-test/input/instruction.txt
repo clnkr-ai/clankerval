@@ -1,1 +1,1 @@
-Fix the failing test without changing test.sh.
+Fix the failing test by updating `testdata/evaluations/fixtures/claude-live-smoke/001-fix-failing-test/app.sh` without changing `testdata/evaluations/fixtures/claude-live-smoke/001-fix-failing-test/test.sh`.

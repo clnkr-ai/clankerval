@@ -11,22 +11,20 @@ import (
 )
 
 func TestRunSuite(t *testing.T) {
-	repoRoot := newTempRepoRoot(t)
-	cleanupGeneratedRunOutput(t, repoRoot)
-	t.Cleanup(func() {
-		cleanupGeneratedRunOutput(t, repoRoot)
-	})
+	lockRealRepoForTest(t)
+	repoRoot := moduleRoot(t)
 
 	t.Run("default mock-provider suite writes deterministic outputs", func(t *testing.T) {
-		cleanupGeneratedRunOutput(t, repoRoot)
-
-		suiteID := writeTempRunSuite(t, repoRoot, runSuiteSpec{
+		requireCleanRealRepoForTest(t, repoRoot)
+		evalsDir := newTempEvalsDir(t)
+		outputDir := t.TempDir()
+		suiteID := writeTempRunSuite(t, evalsDir, runSuiteSpec{
 			trialsPerTask: 1,
 			failurePolicy: FailurePolicy{
 				StopOnFirstFailure: true,
 				MaxFailedTasks:     1,
 			},
-			tasks: []runSuiteTaskSpec{{id: "001-basic-edit", expectedNote: "hello\n"}},
+			tasks: []runSuiteTaskSpec{{id: "001-basic-edit"}},
 		})
 
 		report, err := RunSuite(
@@ -34,6 +32,8 @@ func TestRunSuite(t *testing.T) {
 			repoRoot,
 			suiteID,
 			RunConfig{Mode: ModeMockProvider},
+			WithSuiteEvalsDir(evalsDir),
+			WithSuiteOutputDir(outputDir),
 			WithSuiteBinary(mustClnkuPath(t)),
 		)
 		if err != nil {
@@ -62,15 +62,15 @@ func TestRunSuite(t *testing.T) {
 		if bundlePath == "" {
 			t.Fatal("bundle path is empty")
 		}
-		if !strings.HasPrefix(bundlePath, filepath.Join(repoRoot, "evaluations", "trials")+string(os.PathSeparator)) {
-			t.Fatalf("bundle path = %q, want under evaluations/trials", bundlePath)
+		if !strings.HasPrefix(bundlePath, filepath.Join(outputDir, "trials")+string(os.PathSeparator)) {
+			t.Fatalf("bundle path = %q, want under temp trials output", bundlePath)
 		}
 		if _, err := os.Stat(filepath.Join(bundlePath, "bundle.json")); err != nil {
 			t.Fatalf("bundle.json missing: %v", err)
 		}
 		for _, rel := range []string{
-			filepath.Join(repoRoot, "evaluations", "reports", "open-test-report.xml"),
-			filepath.Join(repoRoot, "evaluations", "reports", "junit.xml"),
+			filepath.Join(outputDir, "reports", "open-test-report.xml"),
+			filepath.Join(outputDir, "reports", "junit.xml"),
 		} {
 			if data, err := os.ReadFile(rel); err != nil {
 				t.Fatalf("ReadFile(%q): %v", rel, err)
@@ -81,20 +81,30 @@ func TestRunSuite(t *testing.T) {
 	})
 
 	t.Run("suite task order comes from suite.json", func(t *testing.T) {
-		cleanupGeneratedRunOutput(t, repoRoot)
-		suiteID := writeTempRunSuite(t, repoRoot, runSuiteSpec{
+		requireCleanRealRepoForTest(t, repoRoot)
+		evalsDir := newTempEvalsDir(t)
+		outputDir := t.TempDir()
+		suiteID := writeTempRunSuite(t, evalsDir, runSuiteSpec{
 			trialsPerTask: 1,
 			failurePolicy: FailurePolicy{
 				StopOnFirstFailure: false,
 				MaxFailedTasks:     10,
 			},
 			tasks: []runSuiteTaskSpec{
-				{id: "task-b", expectedNote: "hello\n"},
-				{id: "task-a", expectedNote: "hello\n"},
+				{id: "task-b"},
+				{id: "task-a"},
 			},
 		})
 
-		report, err := RunSuite(context.Background(), repoRoot, suiteID, RunConfig{Mode: ModeMockProvider}, WithSuiteBinary(mustClnkuPath(t)))
+		report, err := RunSuite(
+			context.Background(),
+			repoRoot,
+			suiteID,
+			RunConfig{Mode: ModeMockProvider},
+			WithSuiteEvalsDir(evalsDir),
+			WithSuiteOutputDir(outputDir),
+			WithSuiteBinary(mustClnkuPath(t)),
+		)
 		if err != nil {
 			t.Fatalf("RunSuite(): %v", err)
 		}
@@ -110,17 +120,27 @@ func TestRunSuite(t *testing.T) {
 	})
 
 	t.Run("trials_per_task controls trial count", func(t *testing.T) {
-		cleanupGeneratedRunOutput(t, repoRoot)
-		suiteID := writeTempRunSuite(t, repoRoot, runSuiteSpec{
+		requireCleanRealRepoForTest(t, repoRoot)
+		evalsDir := newTempEvalsDir(t)
+		outputDir := t.TempDir()
+		suiteID := writeTempRunSuite(t, evalsDir, runSuiteSpec{
 			trialsPerTask: 2,
 			failurePolicy: FailurePolicy{
 				StopOnFirstFailure: false,
 				MaxFailedTasks:     10,
 			},
-			tasks: []runSuiteTaskSpec{{id: "task-a", expectedNote: "hello\n"}},
+			tasks: []runSuiteTaskSpec{{id: "task-a"}},
 		})
 
-		report, err := RunSuite(context.Background(), repoRoot, suiteID, RunConfig{Mode: ModeMockProvider}, WithSuiteBinary(mustClnkuPath(t)))
+		report, err := RunSuite(
+			context.Background(),
+			repoRoot,
+			suiteID,
+			RunConfig{Mode: ModeMockProvider},
+			WithSuiteEvalsDir(evalsDir),
+			WithSuiteOutputDir(outputDir),
+			WithSuiteBinary(mustClnkuPath(t)),
+		)
 		if err != nil {
 			t.Fatalf("RunSuite(): %v", err)
 		}
@@ -133,30 +153,33 @@ func TestRunSuite(t *testing.T) {
 		if report.Tasks[0].Trials[0].TrialAttempt != 0 || report.Tasks[0].Trials[1].TrialAttempt != 1 {
 			t.Fatalf("trial attempts = %d/%d, want 0/1", report.Tasks[0].Trials[0].TrialAttempt, report.Tasks[0].Trials[1].TrialAttempt)
 		}
-		entries, err := os.ReadDir(filepath.Join(repoRoot, "evaluations", "trials"))
-		if err != nil {
-			t.Fatalf("ReadDir(trials): %v", err)
-		}
-		if len(entries) != 2 {
-			t.Fatalf("trial bundle count = %d, want 2", len(entries))
-		}
 	})
 
 	t.Run("stop_on_first_failure stops after the first failed task", func(t *testing.T) {
-		cleanupGeneratedRunOutput(t, repoRoot)
-		suiteID := writeTempRunSuite(t, repoRoot, runSuiteSpec{
+		requireCleanRealRepoForTest(t, repoRoot)
+		evalsDir := newTempEvalsDir(t)
+		outputDir := t.TempDir()
+		suiteID := writeTempRunSuite(t, evalsDir, runSuiteSpec{
 			trialsPerTask: 1,
 			failurePolicy: FailurePolicy{
 				StopOnFirstFailure: true,
 				MaxFailedTasks:     10,
 			},
 			tasks: []runSuiteTaskSpec{
-				{id: "task-fail", expectedNote: "wrong\n"},
-				{id: "task-pass", expectedNote: "hello\n"},
+				{id: "task-fail", noChange: true},
+				{id: "task-pass"},
 			},
 		})
 
-		report, err := RunSuite(context.Background(), repoRoot, suiteID, RunConfig{Mode: ModeMockProvider}, WithSuiteBinary(mustClnkuPath(t)))
+		report, err := RunSuite(
+			context.Background(),
+			repoRoot,
+			suiteID,
+			RunConfig{Mode: ModeMockProvider},
+			WithSuiteEvalsDir(evalsDir),
+			WithSuiteOutputDir(outputDir),
+			WithSuiteBinary(mustClnkuPath(t)),
+		)
 		if err != nil {
 			t.Fatalf("RunSuite(): %v", err)
 		}
@@ -169,20 +192,30 @@ func TestRunSuite(t *testing.T) {
 	})
 
 	t.Run("max_failed_tasks stops once threshold is reached", func(t *testing.T) {
-		cleanupGeneratedRunOutput(t, repoRoot)
-		suiteID := writeTempRunSuite(t, repoRoot, runSuiteSpec{
+		requireCleanRealRepoForTest(t, repoRoot)
+		evalsDir := newTempEvalsDir(t)
+		outputDir := t.TempDir()
+		suiteID := writeTempRunSuite(t, evalsDir, runSuiteSpec{
 			trialsPerTask: 1,
 			failurePolicy: FailurePolicy{
 				StopOnFirstFailure: false,
 				MaxFailedTasks:     1,
 			},
 			tasks: []runSuiteTaskSpec{
-				{id: "task-fail", expectedNote: "wrong\n"},
-				{id: "task-pass", expectedNote: "hello\n"},
+				{id: "task-fail", noChange: true},
+				{id: "task-pass"},
 			},
 		})
 
-		report, err := RunSuite(context.Background(), repoRoot, suiteID, RunConfig{Mode: ModeMockProvider}, WithSuiteBinary(mustClnkuPath(t)))
+		report, err := RunSuite(
+			context.Background(),
+			repoRoot,
+			suiteID,
+			RunConfig{Mode: ModeMockProvider},
+			WithSuiteEvalsDir(evalsDir),
+			WithSuiteOutputDir(outputDir),
+			WithSuiteBinary(mustClnkuPath(t)),
+		)
 		if err != nil {
 			t.Fatalf("RunSuite(): %v", err)
 		}
@@ -195,14 +228,16 @@ func TestRunSuite(t *testing.T) {
 	})
 
 	t.Run("agent identity flows through trial ID bundle path and progress", func(t *testing.T) {
-		cleanupGeneratedRunOutput(t, repoRoot)
-		suiteID := writeTempRunSuite(t, repoRoot, runSuiteSpec{
+		requireCleanRealRepoForTest(t, repoRoot)
+		evalsDir := newTempEvalsDir(t)
+		outputDir := t.TempDir()
+		suiteID := writeTempRunSuite(t, evalsDir, runSuiteSpec{
 			trialsPerTask: 1,
 			failurePolicy: FailurePolicy{
 				StopOnFirstFailure: true,
 				MaxFailedTasks:     1,
 			},
-			tasks: []runSuiteTaskSpec{{id: "agent-check", expectedNote: "hello\n"}},
+			tasks: []runSuiteTaskSpec{{id: "agent-check"}},
 		})
 
 		var progressMessages []string
@@ -211,6 +246,8 @@ func TestRunSuite(t *testing.T) {
 			repoRoot,
 			suiteID,
 			RunConfig{Mode: ModeMockProvider},
+			WithSuiteEvalsDir(evalsDir),
+			WithSuiteOutputDir(outputDir),
 			WithSuiteBinary(mustClnkuPath(t)),
 			WithProgress(func(msg string) {
 				progressMessages = append(progressMessages, msg)
@@ -251,33 +288,52 @@ func TestRunSuite(t *testing.T) {
 	})
 
 	t.Run("unknown suite id rejected", func(t *testing.T) {
-		cleanupGeneratedRunOutput(t, repoRoot)
-		if _, err := RunSuite(context.Background(), repoRoot, "does-not-exist", RunConfig{Mode: ModeMockProvider}, WithSuiteBinary(mustClnkuPath(t))); err == nil || !strings.Contains(err.Error(), "load suite") {
+		evalsDir := newTempEvalsDir(t)
+		outputDir := t.TempDir()
+		if _, err := RunSuite(
+			context.Background(),
+			repoRoot,
+			"does-not-exist",
+			RunConfig{Mode: ModeMockProvider},
+			WithSuiteEvalsDir(evalsDir),
+			WithSuiteOutputDir(outputDir),
+			WithSuiteBinary(mustClnkuPath(t)),
+		); err == nil || !strings.Contains(err.Error(), "load suite") {
 			t.Fatalf("RunSuite() error = %v, want load suite failure", err)
 		}
 	})
 
 	t.Run("canonical bundle write failure leaves no trial output", func(t *testing.T) {
-		cleanupGeneratedRunOutput(t, repoRoot)
+		requireCleanRealRepoForTest(t, repoRoot)
+		evalsDir := newTempEvalsDir(t)
+		outputDir := t.TempDir()
 
 		// Keep the fixture task path valid while forcing the canonical bundle
 		// path component past the usual filesystem component limit.
 		longTaskID := strings.Repeat("a", 240)
-		suiteID := writeTempRunSuite(t, repoRoot, runSuiteSpec{
+		suiteID := writeTempRunSuite(t, evalsDir, runSuiteSpec{
 			trialsPerTask: 1,
 			failurePolicy: FailurePolicy{
 				StopOnFirstFailure: false,
 				MaxFailedTasks:     10,
 			},
-			tasks: []runSuiteTaskSpec{{id: longTaskID, expectedNote: "hello\n"}},
+			tasks: []runSuiteTaskSpec{{id: longTaskID}},
 		})
 
-		_, err := RunSuite(context.Background(), repoRoot, suiteID, RunConfig{Mode: ModeMockProvider}, WithSuiteBinary(mustClnkuPath(t)))
+		_, err := RunSuite(
+			context.Background(),
+			repoRoot,
+			suiteID,
+			RunConfig{Mode: ModeMockProvider},
+			WithSuiteEvalsDir(evalsDir),
+			WithSuiteOutputDir(outputDir),
+			WithSuiteBinary(mustClnkuPath(t)),
+		)
 		if err == nil || !strings.Contains(err.Error(), "write canonical bundle") {
 			t.Fatalf("RunSuite() error = %v, want canonical bundle write failure", err)
 		}
 
-		entries, err := os.ReadDir(filepath.Join(repoRoot, "evaluations", "trials"))
+		entries, err := os.ReadDir(filepath.Join(outputDir, "trials"))
 		if err != nil {
 			t.Fatalf("ReadDir(trials): %v", err)
 		}
@@ -294,14 +350,14 @@ type runSuiteSpec struct {
 }
 
 type runSuiteTaskSpec struct {
-	id           string
-	expectedNote string
+	id       string
+	noChange bool
 }
 
-func writeTempRunSuite(t *testing.T, repoRoot string, spec runSuiteSpec) string {
+func writeTempRunSuite(t *testing.T, evalsDir string, spec runSuiteSpec) string {
 	t.Helper()
 
-	suitesRoot := filepath.Join(repoRoot, "evaluations", "suites")
+	suitesRoot := filepath.Join(evalsDir, "suites")
 	suiteDir, err := os.MkdirTemp(suitesRoot, "task6-*")
 	if err != nil {
 		t.Fatalf("MkdirTemp(): %v", err)
@@ -314,20 +370,22 @@ func writeTempRunSuite(t *testing.T, repoRoot string, spec runSuiteSpec) string 
 	for _, task := range spec.tasks {
 		tasks = append(tasks, task.id)
 		taskDir := filepath.Join(suiteDir, "tasks", task.id)
-		writeTestFile(t, filepath.Join(taskDir, "input", "instruction.txt"), "Create note.txt in the repo root with the contents hello and then finish.\n")
-		writeTestFile(t, filepath.Join(taskDir, "input", "model-turns.json"), "[\"{\\\"type\\\":\\\"act\\\",\\\"command\\\":\\\"printf 'hello\\\\n' > note.txt\\\"}\",\"{\\\"type\\\":\\\"done\\\",\\\"summary\\\":\\\"finished\\\"}\"]\n")
+		writeTestFile(t, filepath.Join(taskDir, "input", "instruction.txt"), "Rewrite `"+trackedDummyNotePath()+"` so it contains `hello`, then finish.\n")
+		modelTurns := "[\"{\\\"type\\\":\\\"act\\\",\\\"command\\\":\\\"" + trackedDummyNoteCommandLiteral() + "\\\"}\",\"{\\\"type\\\":\\\"done\\\",\\\"summary\\\":\\\"finished\\\"}\"]\n"
+		if task.noChange {
+			modelTurns = "[\"{\\\"type\\\":\\\"done\\\",\\\"summary\\\":\\\"finished\\\"}\"]\n"
+		}
+		writeTestFile(t, filepath.Join(taskDir, "input", "model-turns.json"), modelTurns)
 		writeWorkspaceFile(t, filepath.Join(taskDir, "input", "project", "AGENTS.md"), "Keep changes tight. Work in the current directory.\n", 0o644)
-		writeWorkspaceFile(t, filepath.Join(taskDir, "expected", "workspace", "AGENTS.md"), "Keep changes tight. Work in the current directory.\n", 0o644)
-		writeWorkspaceFile(t, filepath.Join(taskDir, "expected", "workspace", "note.txt"), task.expectedNote, 0o644)
 		writeTestFile(t, filepath.Join(taskDir, "task.json"), `{
   "id": "`+task.id+`",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "enabled": true,
       "required": true
     },
@@ -357,14 +415,6 @@ func writeTempRunSuite(t *testing.T, repoRoot string, spec runSuiteSpec) string 
 }`
 	writeTestFile(t, filepath.Join(suiteDir, "suite.json"), suiteJSON)
 	return suiteID
-}
-
-func cleanupGeneratedRunOutput(t *testing.T, repoRoot string) {
-	t.Helper()
-
-	for _, rel := range []string{"evaluations/trials", "evaluations/reports"} {
-		_ = os.RemoveAll(filepath.Join(repoRoot, rel))
-	}
 }
 
 func formatInt(value int) string {

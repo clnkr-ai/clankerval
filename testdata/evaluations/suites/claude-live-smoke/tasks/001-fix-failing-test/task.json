@@ -1,14 +1,18 @@
 {
   "id": "001-fix-failing-test",
   "instruction_file": "input/instruction.txt",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "full_send": true,
   "step_limit": 12,
   "graders": {
     "outcome_command_output": {
       "enabled": true,
       "required": true,
-      "command": ["bash", "{{workspace}}/test.sh"],
+      "command": [
+        "bash",
+        "-lc",
+        "cd testdata/evaluations/fixtures/claude-live-smoke/001-fix-failing-test && bash ./test.sh"
+      ],
       "expected_exit_code": 0,
       "stdout_contains": ["PASS"],
       "stderr_must_not_contain": ["FAIL"]
