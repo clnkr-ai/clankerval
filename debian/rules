@@ -15,7 +15,24 @@ override_dh_auto_build:
 
 override_dh_auto_test:
 	go test ./... -v
-	make evaluations
+	set -eu; \
+	tmp_repo="$$(mktemp -d)"; \
+	trap 'rm -rf "$$tmp_repo"' EXIT; \
+	mkdir -p "$$tmp_repo/testdata/evaluations/fixtures/dummy/001-basic"; \
+	cp ./testdata/evaluations/fixtures/dummy/001-basic/note.txt \
+		"$$tmp_repo/testdata/evaluations/fixtures/dummy/001-basic/note.txt"; \
+	( \
+		cd "$$tmp_repo" && \
+		git init -q && \
+		git config user.name debian-build && \
+		git config user.email debian-build@example.com && \
+		git add testdata/evaluations/fixtures/dummy/001-basic/note.txt && \
+		git commit -q -m base && \
+		"$(CURDIR)/clankerval" run --suite dummy \
+			--evals-dir "$(CURDIR)/testdata/evaluations" \
+			--binary "$(CURDIR)/evalfixture-agent" \
+			--output-dir "$$tmp_repo/out" \
+	)
 
 override_dh_auto_install:
 	:

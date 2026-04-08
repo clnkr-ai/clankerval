@@ -11,13 +11,29 @@ test -x /usr/bin/clankerval
 
 clankerval --version
 
+repo_root="$tmp1/repo"
+mkdir -p "$repo_root/testdata/evaluations/fixtures/dummy/001-basic"
+cp /usr/share/doc/clankerval/examples/evaluations/fixtures/dummy/001-basic/note.txt \
+   "$repo_root/testdata/evaluations/fixtures/dummy/001-basic/note.txt"
+(
+    cd "$repo_root"
+    git init -q
+    git config user.name autopkgtest
+    git config user.email autopkgtest@example.com
+    git add testdata/evaluations/fixtures/dummy/001-basic/note.txt
+    git commit -q -m base
+)
+
 stdout1="$tmp1/stdout"
 stderr1="$tmp1/stderr"
-clankerval run --suite dummy \
-    --evals-dir /usr/share/doc/clankerval/examples/evaluations \
-    --binary /usr/libexec/clankerval/examples/evalfixture-agent \
-    --output-dir "$tmp1/out" \
-    >"$stdout1" 2>"$stderr1"
+(
+    cd "$repo_root"
+    clankerval run --suite dummy \
+        --evals-dir /usr/share/doc/clankerval/examples/evaluations \
+        --binary /usr/libexec/clankerval/examples/evalfixture-agent \
+        --output-dir "$tmp1/out" \
+        >"$stdout1" 2>"$stderr1"
+)
 grep -Fxq 'suite=dummy tasks=1 trials=1 passed=1 failed=0' "$stdout1"
 grep -Fq 'clankerval:' "$stderr1"
 test -f "$tmp1/out/reports/junit.xml"
