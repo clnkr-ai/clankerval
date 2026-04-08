@@ -22,6 +22,6 @@ grep -Fxq 'suite=dummy tasks=1 trials=1 passed=1 failed=0' "$stdout1"
 grep -Fq 'clankerval:' "$stderr1"
 test -f "$tmp1/out/reports/junit.xml"
 test -f "$tmp1/out/reports/open-test-report.xml"
-test -f "$tmp1/out/trials"/trial-dummy-*-000-00-001-basic/outcome/workspace/note.txt
+test -f "$tmp1/out/trials"/trial-dummy-*-000-00-001-basic/outcome/diff.patch
 
 echo "OK: smoke tests passed"
