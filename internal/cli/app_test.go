@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 
 	"github.com/clnkr-ai/clankerval/internal/evaluations"
@@ -16,20 +17,23 @@ import (
 )
 
 func TestRun(t *testing.T) {
+	lockRealRepoForTest(t)
 	stagedClnku := mustStageClnku(t)
 
 	t.Run("run suite prints summary", func(t *testing.T) {
-		repoRoot := newTempRepoRoot(t)
-		suiteID := writeTempSuite(t, repoRoot, suiteSpec{
+		repoRoot := moduleRoot(t)
+		requireCleanRealRepoForTest(t, repoRoot)
+		evalsDir := newTempEvalsDir(t)
+		suiteID := writeTempSuite(t, evalsDir, suiteSpec{
 			trialsPerTask: 1,
 			stopOnFirst:   true,
 			maxFailed:     1,
-			tasks:         []suiteTaskSpec{{id: "task-pass", expectedNote: "hello\n"}},
+			tasks:         []suiteTaskSpec{{id: "task-pass"}},
 		})
 
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
-		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID, "--binary", stagedClnku}, repoRoot, stdout, stderr, func(string) string { return "" })
+		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID, "--binary", stagedClnku, "--evals-dir", evalsDir}, repoRoot, stdout, stderr, func(string) string { return "" })
 		if exitCode != 0 {
 			t.Fatalf("exit code = %d, want 0; stderr=%q", exitCode, stderr.String())
 		}
@@ -42,16 +46,18 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("failed trial prints stderr context and exits non-zero", func(t *testing.T) {
-		repoRoot := newTempRepoRoot(t)
-		suiteID := writeTempSuite(t, repoRoot, suiteSpec{
+		repoRoot := moduleRoot(t)
+		requireCleanRealRepoForTest(t, repoRoot)
+		evalsDir := newTempEvalsDir(t)
+		suiteID := writeTempSuite(t, evalsDir, suiteSpec{
 			trialsPerTask: 1,
 			stopOnFirst:   true,
 			maxFailed:     1,
-			tasks:         []suiteTaskSpec{{id: "task-fail", expectedNote: "wrong\n"}},
+			tasks:         []suiteTaskSpec{{id: "task-fail", noChange: true}},
 		})
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
-		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID, "--binary", stagedClnku}, repoRoot, stdout, stderr, func(string) string { return "" })
+		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID, "--binary", stagedClnku, "--evals-dir", evalsDir}, repoRoot, stdout, stderr, func(string) string { return "" })
 		if exitCode == 0 {
 			t.Fatalf("exit code = 0, want non-zero")
 		}
@@ -68,12 +74,29 @@ func TestRun(t *testing.T) {
 		if err := clnkusim.WriteSourceTree(sourceRepoRoot); err != nil {
 			t.Fatalf("WriteSourceTree(): %v", err)
 		}
-		suiteRepoRoot := newTempRepoRoot(t)
-		suiteID := writeTempSuite(t, suiteRepoRoot, suiteSpec{
+		mustWrite(t, filepath.Join(sourceRepoRoot, trackedDummyNotePath()), "seed note\n")
+		for _, args := range [][]string{
+			{"init"},
+			{"-C", sourceRepoRoot, "config", "user.name", "Codex"},
+			{"-C", sourceRepoRoot, "config", "user.email", "codex@example.com"},
+			{"-C", sourceRepoRoot, "add", "."},
+			{"-C", sourceRepoRoot, "commit", "-m", "init"},
+		} {
+			cmd := exec.Command("git", args...)
+			if len(args) == 1 && args[0] == "init" {
+				cmd.Dir = sourceRepoRoot
+			}
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v: %v: %s", args, err, out)
+			}
+		}
+
+		evalsDir := newTempEvalsDir(t)
+		suiteID := writeTempSuite(t, evalsDir, suiteSpec{
 			trialsPerTask: 1,
 			stopOnFirst:   true,
 			maxFailed:     1,
-			tasks:         []suiteTaskSpec{{id: "task-pass", expectedNote: "hello\n"}},
+			tasks:         []suiteTaskSpec{{id: "task-pass"}},
 		})
 		outputDir := t.TempDir()
 		stdout := &bytes.Buffer{}
@@ -81,7 +104,7 @@ func TestRun(t *testing.T) {
 		exitCode := Run(
 			"clankerval",
 			"dev",
-			[]string{"run", "--suite", suiteID, "--evals-dir", filepath.Join(suiteRepoRoot, "evaluations"), "--output-dir", outputDir},
+			[]string{"run", "--suite", suiteID, "--evals-dir", evalsDir, "--output-dir", outputDir},
 			sourceRepoRoot,
 			stdout,
 			stderr,
@@ -102,18 +125,20 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("run without --binary falls back to clnku on PATH when ./cmd/clnku does not exist", func(t *testing.T) {
-		repoRoot := newTempRepoRoot(t)
-		suiteID := writeTempSuite(t, repoRoot, suiteSpec{
+		repoRoot := moduleRoot(t)
+		requireCleanRealRepoForTest(t, repoRoot)
+		evalsDir := newTempEvalsDir(t)
+		suiteID := writeTempSuite(t, evalsDir, suiteSpec{
 			trialsPerTask: 1,
 			stopOnFirst:   true,
 			maxFailed:     1,
-			tasks:         []suiteTaskSpec{{id: "task-pass", expectedNote: "hello\n"}},
+			tasks:         []suiteTaskSpec{{id: "task-pass"}},
 		})
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
 		pathEnv := filepath.Dir(stagedClnku) + string(os.PathListSeparator) + os.Getenv("PATH")
 		t.Setenv("PATH", pathEnv)
-		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID}, repoRoot, stdout, stderr, func(key string) string {
+		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID, "--evals-dir", evalsDir}, repoRoot, stdout, stderr, func(key string) string {
 			if key == "PATH" {
 				return pathEnv
 			}
@@ -134,7 +159,7 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("claude agent does not preflight clnku before suite loading", func(t *testing.T) {
-		repoRoot := newTempRepoRoot(t)
+		repoRoot := moduleRoot(t)
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
 		exitCode := Run("clankerval", "dev", []string{"run", "--suite", "missing", "--agent", "claude"}, repoRoot, stdout, stderr, func(key string) string {
@@ -155,15 +180,23 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("run resolves relative evals and output dirs against explicit cwd", func(t *testing.T) {
-		repoRoot := newTempRepoRoot(t)
-		suiteID := writeTempSuite(t, repoRoot, suiteSpec{
+		repoRoot := moduleRoot(t)
+		requireCleanRealRepoForTest(t, repoRoot)
+		evalsDir := newTempEvalsDir(t)
+		suiteID := writeTempSuite(t, evalsDir, suiteSpec{
 			trialsPerTask: 1,
 			stopOnFirst:   true,
 			maxFailed:     1,
-			tasks:         []suiteTaskSpec{{id: "task-pass", expectedNote: "hello\n"}},
+			tasks:         []suiteTaskSpec{{id: "task-pass"}},
 		})
-		if err := os.Rename(filepath.Join(repoRoot, "evaluations"), filepath.Join(repoRoot, "custom-evals")); err != nil {
-			t.Fatalf("Rename(evaluations -> custom-evals): %v", err)
+		outputDir := t.TempDir()
+		relEvalsDir, err := filepath.Rel(repoRoot, evalsDir)
+		if err != nil {
+			t.Fatalf("filepath.Rel(evalsDir): %v", err)
+		}
+		relOutputDir, err := filepath.Rel(repoRoot, outputDir)
+		if err != nil {
+			t.Fatalf("filepath.Rel(outputDir): %v", err)
 		}
 
 		stdout := &bytes.Buffer{}
@@ -171,7 +204,7 @@ func TestRun(t *testing.T) {
 		exitCode := Run(
 			"clankerval",
 			"dev",
-			[]string{"run", "--suite", suiteID, "--binary", stagedClnku, "--evals-dir", "custom-evals", "--output-dir", "custom-output"},
+			[]string{"run", "--suite", suiteID, "--binary", stagedClnku, "--evals-dir", relEvalsDir, "--output-dir", relOutputDir},
 			repoRoot,
 			stdout,
 			stderr,
@@ -180,16 +213,17 @@ func TestRun(t *testing.T) {
 		if exitCode != 0 {
 			t.Fatalf("exit code = %d, want 0; stderr=%q", exitCode, stderr.String())
 		}
-		if _, err := os.Stat(filepath.Join(repoRoot, "custom-output", "trials")); err != nil {
+		if _, err := os.Stat(filepath.Join(outputDir, "trials")); err != nil {
 			t.Fatalf("trials output missing under explicit cwd: %v", err)
 		}
-		if _, err := os.Stat(filepath.Join(repoRoot, "custom-output", "reports", "junit.xml")); err != nil {
+		if _, err := os.Stat(filepath.Join(outputDir, "reports", "junit.xml")); err != nil {
 			t.Fatalf("report output missing under explicit cwd: %v", err)
 		}
 	})
 
 	t.Run("run repo-local dummy suite with compiled fixture binary", func(t *testing.T) {
 		moduleRoot := moduleRoot(t)
+		requireCleanRealRepoForTest(t, moduleRoot)
 		outputDir := t.TempDir()
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
@@ -200,7 +234,7 @@ func TestRun(t *testing.T) {
 				"run",
 				"--suite", "dummy",
 				"--evals-dir", filepath.Join(moduleRoot, "testdata", "evaluations"),
-				"--binary", mustStageEvalFixture(t),
+				"--binary", stagedClnku,
 				"--output-dir", outputDir,
 			},
 			moduleRoot,
@@ -227,7 +261,7 @@ func TestRun(t *testing.T) {
 			filepath.Join(outputDir, "reports", "junit.xml"),
 			filepath.Join(outputDir, "reports", "open-test-report.xml"),
 			filepath.Join(outputDir, "trials", "trial-dummy-clnku-000-00-001-basic", "bundle.json"),
-			filepath.Join(outputDir, "trials", "trial-dummy-clnku-000-00-001-basic", "outcome", "workspace", "note.txt"),
+			filepath.Join(outputDir, "trials", "trial-dummy-clnku-000-00-001-basic", "outcome", "diff.patch"),
 		} {
 			if _, err := os.Stat(rel); err != nil {
 				t.Fatalf("Stat(%q): %v", rel, err)
@@ -236,17 +270,19 @@ func TestRun(t *testing.T) {
 	})
 
 	t.Run("run accepts --agent flag", func(t *testing.T) {
-		repoRoot := newTempRepoRoot(t)
-		suiteID := writeTempSuite(t, repoRoot, suiteSpec{
+		repoRoot := moduleRoot(t)
+		requireCleanRealRepoForTest(t, repoRoot)
+		evalsDir := newTempEvalsDir(t)
+		suiteID := writeTempSuite(t, evalsDir, suiteSpec{
 			trialsPerTask: 1,
 			stopOnFirst:   true,
 			maxFailed:     1,
-			tasks:         []suiteTaskSpec{{id: "task-pass", expectedNote: "hello\n"}},
+			tasks:         []suiteTaskSpec{{id: "task-pass"}},
 		})
 
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
-		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID, "--binary", stagedClnku, "--agent", "clnku"}, repoRoot, stdout, stderr, func(string) string { return "" })
+		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID, "--binary", stagedClnku, "--agent", "clnku", "--evals-dir", evalsDir}, repoRoot, stdout, stderr, func(string) string { return "" })
 		if exitCode != 0 {
 			t.Fatalf("exit code = %d, want 0; stderr=%q", exitCode, stderr.String())
 		}
@@ -416,24 +452,10 @@ func TestSubcommandHelpStreamsToStderr(t *testing.T) {
 	}
 }
 
-func newTempRepoRoot(t *testing.T) string {
-	t.Helper()
-
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "evaluations", "suites"), 0o755); err != nil {
-		t.Fatalf("MkdirAll(evaluations/suites): %v", err)
-	}
-	return root
-}
-
 var (
 	stageClnkuOnce sync.Once
 	stageClnkuPath string
 	stageClnkuErr  error
-
-	stageEvalFixtureOnce sync.Once
-	stageEvalFixturePath string
-	stageEvalFixtureErr  error
 )
 
 func mustStageClnku(t *testing.T) string {
@@ -457,30 +479,6 @@ func mustStageClnku(t *testing.T) string {
 	return stageClnkuPath
 }
 
-func mustStageEvalFixture(t *testing.T) string {
-	t.Helper()
-
-	stageEvalFixtureOnce.Do(func() {
-		tempDir, err := os.MkdirTemp("", "clankerval-evalfixture-*")
-		if err != nil {
-			stageEvalFixtureErr = fmt.Errorf("create temp dir for staged eval fixture: %w", err)
-			return
-		}
-		stageEvalFixturePath = filepath.Join(tempDir, "evalfixture-agent")
-
-		cmd := exec.Command("go", "build", "-o", stageEvalFixturePath, "./internal/testfixture/evalfixture-agent")
-		cmd.Dir = moduleRoot(t)
-		output, err := cmd.CombinedOutput()
-		if err != nil {
-			stageEvalFixtureErr = fmt.Errorf("build staged eval fixture: %w: %s", err, output)
-		}
-	})
-	if stageEvalFixtureErr != nil {
-		t.Fatal(stageEvalFixtureErr)
-	}
-	return stageEvalFixturePath
-}
-
 func moduleRoot(t *testing.T) string {
 	t.Helper()
 
@@ -491,6 +489,37 @@ func moduleRoot(t *testing.T) string {
 	return filepath.Clean(filepath.Join(cwd, "..", ".."))
 }
 
+func lockRealRepoForTest(t *testing.T) {
+	t.Helper()
+
+	lockPath := filepath.Join(os.TempDir(), "clankerval-real-repo-tests.lock")
+	file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("OpenFile(%q): %v", lockPath, err)
+	}
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		_ = file.Close()
+		t.Fatalf("Flock(%q): %v", lockPath, err)
+	}
+	t.Cleanup(func() {
+		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+		_ = file.Close()
+	})
+}
+
+func requireCleanRealRepoForTest(t *testing.T, repoRoot string) {
+	t.Helper()
+
+	cmd := exec.Command("git", "-C", repoRoot, "status", "--porcelain", "--untracked-files=all")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git status: %v: %s", err, out)
+	}
+	if trimmed := strings.TrimSpace(string(out)); trimmed != "" {
+		t.Skipf("skipping real-checkout test in dirty repo:\n%s", trimmed)
+	}
+}
+
 type suiteSpec struct {
 	trialsPerTask int
 	stopOnFirst   bool
@@ -499,17 +528,14 @@ type suiteSpec struct {
 }
 
 type suiteTaskSpec struct {
-	id           string
-	expectedNote string
+	id       string
+	noChange bool
 }
 
-func writeTempSuite(t *testing.T, repoRoot string, spec suiteSpec) string {
+func writeTempSuite(t *testing.T, evalsDir string, spec suiteSpec) string {
 	t.Helper()
 
-	suitesRoot := filepath.Join(repoRoot, "evaluations", "suites")
-	if err := os.MkdirAll(suitesRoot, 0o755); err != nil {
-		t.Fatalf("MkdirAll(%q): %v", suitesRoot, err)
-	}
+	suitesRoot := filepath.Join(evalsDir, "suites")
 	suiteDir, err := os.MkdirTemp(suitesRoot, "clankerval-*")
 	if err != nil {
 		t.Fatalf("MkdirTemp(): %v", err)
@@ -522,20 +548,22 @@ func writeTempSuite(t *testing.T, repoRoot string, spec suiteSpec) string {
 	for _, task := range spec.tasks {
 		tasks = append(tasks, task.id)
 		taskDir := filepath.Join(suiteDir, "tasks", task.id)
-		mustWrite(t, filepath.Join(taskDir, "input", "instruction.txt"), "Create note.txt in the repo root with the contents hello and then finish.\n")
-		mustWrite(t, filepath.Join(taskDir, "input", "model-turns.json"), "[\"{\\\"type\\\":\\\"act\\\",\\\"command\\\":\\\"printf 'hello\\\\n' > note.txt\\\"}\",\"{\\\"type\\\":\\\"done\\\",\\\"summary\\\":\\\"finished\\\"}\"]\n")
+		mustWrite(t, filepath.Join(taskDir, "input", "instruction.txt"), "Rewrite `"+trackedDummyNotePath()+"` so it contains `hello`, then finish.\n")
+		modelTurns := "[\"{\\\"type\\\":\\\"act\\\",\\\"command\\\":\\\"" + trackedDummyNoteCommandLiteral() + "\\\"}\",\"{\\\"type\\\":\\\"done\\\",\\\"summary\\\":\\\"finished\\\"}\"]\n"
+		if task.noChange {
+			modelTurns = "[\"{\\\"type\\\":\\\"done\\\",\\\"summary\\\":\\\"finished\\\"}\"]\n"
+		}
+		mustWrite(t, filepath.Join(taskDir, "input", "model-turns.json"), modelTurns)
 		mustWrite(t, filepath.Join(taskDir, "input", "project", "AGENTS.md"), "Keep changes tight. Work in the current directory.\n")
-		mustWrite(t, filepath.Join(taskDir, "expected", "workspace", "AGENTS.md"), "Keep changes tight. Work in the current directory.\n")
-		mustWrite(t, filepath.Join(taskDir, "expected", "workspace", "note.txt"), task.expectedNote)
 		taskJSON := `{
   "id": "` + task.id + `",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "enabled": true,
       "required": true
     },
@@ -562,6 +590,28 @@ func writeTempSuite(t *testing.T, repoRoot string, spec suiteSpec) string {
 }`
 	mustWrite(t, filepath.Join(suiteDir, "suite.json"), suiteJSON)
 	return suiteID
+}
+
+func newTempEvalsDir(t *testing.T) string {
+	t.Helper()
+
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "suites"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(%q): %v", filepath.Join(root, "suites"), err)
+	}
+	return root
+}
+
+func trackedDummyNotePath() string {
+	return filepath.Join("testdata", "evaluations", "fixtures", "dummy", "001-basic", "note.txt")
+}
+
+func trackedDummyNoteCommand() string {
+	return "printf 'hello\\n' > " + trackedDummyNotePath()
+}
+
+func trackedDummyNoteCommandLiteral() string {
+	return strings.ReplaceAll(trackedDummyNoteCommand(), "\\", "\\\\")
 }
 
 func mustWrite(t *testing.T, path, content string) {

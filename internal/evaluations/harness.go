@@ -14,6 +14,10 @@ import (
 	"time"
 )
 
+// Keep temp-index add batches comfortably below ARG_MAX so large untracked sets
+// never fail on argv size.
+const gitAddIntentBatchByteLimit = 64 * 1024
+
 // Harness coordinates evaluation trials and resolves the clnku binary only when
 // a clnku trial actually needs it.
 type Harness struct {
@@ -75,7 +79,6 @@ type RunArtifacts struct {
 	RawAgentArtifacts     []RawAgentArtifact
 	ProviderRequests      []CapturedRequest
 	ProviderResponses     []string
-	Workspace             map[string]string
 	WorkspaceRoot         string
 	HomeDir               string
 	ConfigDir             string
@@ -86,6 +89,17 @@ type RunArtifacts struct {
 	GraderResults         []GraderResult
 	FailedRequiredGraders []GraderResult
 	GitDiff               string
+	GitNameStatus         string
+	GitNumstat            string
+}
+
+type repoRootOverlayState struct {
+	Present            bool
+	Content            []byte
+	Mode               os.FileMode
+	IsSymlink          bool
+	SymlinkTarget      string
+	SymlinkTargetState *repoRootOverlayState
 }
 
 // NewHarness prepares a reusable harness for evaluation trials.
@@ -139,7 +153,7 @@ func (h *Harness) Close() error {
 }
 
 // RunTrial materializes one task run and captures its raw artifacts.
-func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunConfig) (RunArtifacts, error) {
+func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunConfig) (artifacts RunArtifacts, err error) {
 	trialRoot, err := os.MkdirTemp(h.trialsDir, "trial-*")
 	if err != nil {
 		return RunArtifacts{}, fmt.Errorf("create trial root: %w", err)
@@ -150,7 +164,7 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 
 	startedAt := time.Now().UTC()
 	taskRoot := resolveTaskRoot(h.repoRoot, h.evalsDir, suite.ID, task.ID)
-	artifacts := RunArtifacts{
+	artifacts = RunArtifacts{
 		SuiteID:        suite.ID,
 		TaskID:         task.ID,
 		TaskRoot:       taskRoot,
@@ -167,19 +181,7 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 	}
 	artifacts.Mode = mode
 	artifacts.Agent = EffectiveAgent(task.Agent, suite.Agent, cfg.Agent)
-	if artifacts.Agent == AgentClnku {
-		if err := h.ensureClnkuBinary(ctx); err != nil {
-			return RunArtifacts{}, fmt.Errorf("ensure clnku binary: %w", err)
-		}
-	}
-
-	inPlace := task.WorkingDirectory == "."
-	var workspaceDir string
-	if inPlace {
-		workspaceDir = h.repoRoot
-	} else {
-		workspaceDir = filepath.Join(trialRoot, task.WorkingDirectory)
-	}
+	workspaceDir := h.repoRoot
 
 	homeDir := filepath.Join(trialRoot, "home")
 	configDir := filepath.Join(trialRoot, "config")
@@ -188,11 +190,6 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 		return RunArtifacts{}, fmt.Errorf("create state dir: %w", err)
 	}
 
-	if !inPlace {
-		if err := copyTreeOptional(filepath.Join(taskRoot, "input", "workspace"), workspaceDir); err != nil {
-			return RunArtifacts{}, fmt.Errorf("copy workspace input: %w", err)
-		}
-	}
 	if err := copyTreeOptional(filepath.Join(taskRoot, "input", "home"), homeDir); err != nil {
 		return RunArtifacts{}, fmt.Errorf("copy home input: %w", err)
 	}
@@ -200,14 +197,27 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 		return RunArtifacts{}, fmt.Errorf("copy config input: %w", err)
 	}
 
-	// Record git HEAD before the trial for in-place diff capture.
-	var baseRef string
-	if inPlace {
-		headOut, _, headExit, headErr := runCommand(ctx, workspaceDir, nil, "git", "rev-parse", "HEAD")
-		if headErr != nil || headExit != 0 {
-			return RunArtifacts{}, fmt.Errorf("record git HEAD before trial: exit=%d err=%v", headExit, headErr)
+	if err := h.preflightRepoRoot(ctx); err != nil {
+		return RunArtifacts{}, err
+	}
+	overlayState, err := captureRepoRootOverlayState(workspaceDir, "AGENTS.md", "CLAUDE.md")
+	if err != nil {
+		return RunArtifacts{}, err
+	}
+	cleanupCtx := context.Background()
+	if ctx != nil {
+		cleanupCtx = context.WithoutCancel(ctx)
+	}
+	defer func() {
+		if cleanupErr := h.cleanupRepoRoot(cleanupCtx, workspaceDir, overlayState); cleanupErr != nil {
+			err = errors.Join(err, cleanupErr)
 		}
-		baseRef = strings.TrimSpace(headOut)
+	}()
+
+	if artifacts.Agent == AgentClnku {
+		if err := h.ensureClnkuBinary(ctx); err != nil {
+			return RunArtifacts{}, fmt.Errorf("ensure clnku binary: %w", err)
+		}
 	}
 
 	var mockProvider *MockProvider
@@ -235,6 +245,7 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 		"TZ=UTC",
 		"PATH=" + os.Getenv("PATH"),
 	}
+	env = appendEnvFromHostIfSet(env, "MISE_YES")
 	if artifacts.Agent == AgentClaude {
 		env = appendEnvFromHostIfSet(env, "ANTHROPIC_API_KEY")
 		env = appendEnvFromHostIfSet(env, "ANTHROPIC_BASE_URL")
@@ -268,39 +279,26 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 	artifacts.TranscriptEvents = adapterResult.TranscriptEvents
 	artifacts.Commands = adapterResult.Commands
 	artifacts.RawAgentArtifacts = adapterResult.RawAgentArtifacts
-
-	if inPlace {
-		// Capture git diff against the recorded base ref.
-		diffOut, _, diffExit, diffErr := runCommand(ctx, workspaceDir, nil, "git", "diff", baseRef)
-		if diffErr != nil {
-			return RunArtifacts{}, fmt.Errorf("capture git diff: %w", diffErr)
-		}
-		if diffExit != 0 {
-			return RunArtifacts{}, fmt.Errorf("capture git diff exit code %d", diffExit)
-		}
-		artifacts.GitDiff = diffOut
-		artifacts.Workspace = nil
-
-		// Reset the workspace for the next trial.
-		if _, _, rc, err := runCommand(ctx, workspaceDir, nil, "git", "reset", "--hard", baseRef); err != nil || rc != 0 {
-			return RunArtifacts{}, fmt.Errorf("reset workspace to %s: exit=%d err=%v", baseRef, rc, err)
-		}
-		if _, _, rc, err := runCommand(ctx, workspaceDir, nil, "git", "clean", "-fd"); err != nil || rc != 0 {
-			return RunArtifacts{}, fmt.Errorf("clean workspace: exit=%d err=%v", rc, err)
-		}
-	} else {
-		workspace, err := snapshotWorkspace(workspaceDir)
-		if err != nil {
-			return RunArtifacts{}, fmt.Errorf("snapshot workspace: %w", err)
-		}
-		artifacts.Workspace = workspace
-	}
-
 	artifacts.WorkspaceRoot = workspaceDir
 	artifacts.HomeDir = homeDir
 	artifacts.ConfigDir = configDir
 	artifacts.StateDir = stateDir
 	artifacts.TempDir = h.tempRoot
+	gitIndexPath, err := repoGitIndexPath(ctx, workspaceDir)
+	if err != nil {
+		return RunArtifacts{}, err
+	}
+	tempIndexPath, err := createTempFilePath(trialRoot, "git-index-*")
+	if err != nil {
+		return RunArtifacts{}, fmt.Errorf("create temp git index: %w", err)
+	}
+	if err := copyFile(gitIndexPath, tempIndexPath); err != nil {
+		return RunArtifacts{}, fmt.Errorf("copy git index: %w", err)
+	}
+	if err := captureGitDiffArtifacts(ctx, workspaceDir, tempIndexPath, &artifacts); err != nil {
+		return RunArtifacts{}, err
+	}
+
 	if mockProvider != nil {
 		artifacts.ProviderRequests = mockProvider.Requests()
 		artifacts.ProviderResponses = collectProviderResponses(artifacts.ProviderRequests)
@@ -438,6 +436,218 @@ func runCommand(ctx context.Context, cwd string, env []string, binary string, ar
 	return stdout.String(), stderr.String(), 0, fmt.Errorf("run %q: %w", strings.Join(append([]string{binary}, args...), " "), err)
 }
 
+func repoGitEnv(overrides ...string) []string {
+	env := scrubbedGitEnv(os.Environ())
+	return append(env, overrides...)
+}
+
+func scrubbedGitEnv(env []string) []string {
+	scrubbed := make([]string, 0, len(env))
+	for _, item := range env {
+		if strings.HasPrefix(item, "GIT_") {
+			continue
+		}
+		scrubbed = append(scrubbed, item)
+	}
+	return scrubbed
+}
+
+func (h *Harness) preflightRepoRoot(ctx context.Context) error {
+	info, err := os.Stat(h.repoRoot)
+	if err != nil {
+		return fmt.Errorf("preflight repo root %q: %w", h.repoRoot, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("preflight repo root %q: not a directory", h.repoRoot)
+	}
+
+	headOut, headStderr, headExit, headErr := runCommand(ctx, h.repoRoot, repoGitEnv(), "git", "rev-parse", "HEAD")
+	if headErr != nil {
+		return fmt.Errorf("preflight git rev-parse HEAD: %w", headErr)
+	}
+	if headExit != 0 {
+		return fmt.Errorf("preflight git rev-parse HEAD: exit=%d stderr=%s", headExit, strings.TrimSpace(headStderr))
+	}
+	if strings.TrimSpace(headOut) == "" {
+		return fmt.Errorf("preflight git rev-parse HEAD: empty HEAD")
+	}
+
+	topLevelOut, topLevelStderr, topLevelExit, topLevelErr := runCommand(ctx, h.repoRoot, repoGitEnv(), "git", "rev-parse", "--show-toplevel")
+	if topLevelErr != nil {
+		return fmt.Errorf("preflight git rev-parse --show-toplevel: %w", topLevelErr)
+	}
+	if topLevelExit != 0 {
+		return fmt.Errorf("preflight git rev-parse --show-toplevel: exit=%d stderr=%s", topLevelExit, strings.TrimSpace(topLevelStderr))
+	}
+	absRepoRoot, err := filepath.Abs(h.repoRoot)
+	if err != nil {
+		return fmt.Errorf("preflight repo root abs path %q: %w", h.repoRoot, err)
+	}
+	resolvedRepoRoot, err := resolveExistingPath(absRepoRoot)
+	if err != nil {
+		return fmt.Errorf("preflight resolve repo root %q: %w", absRepoRoot, err)
+	}
+	resolvedTopLevel, err := resolveExistingPath(strings.TrimSpace(topLevelOut))
+	if err != nil {
+		return fmt.Errorf("preflight resolve git worktree top-level %q: %w", strings.TrimSpace(topLevelOut), err)
+	}
+	if filepath.Clean(resolvedRepoRoot) != filepath.Clean(resolvedTopLevel) {
+		return fmt.Errorf("preflight repo root %q is not git worktree top-level %q", resolvedRepoRoot, resolvedTopLevel)
+	}
+
+	statusOut, statusStderr, statusExit, statusErr := runCommand(ctx, h.repoRoot, repoGitEnv(), "git", "status", "--porcelain", "--untracked-files=all")
+	if statusErr != nil {
+		return fmt.Errorf("preflight git status: %w", statusErr)
+	}
+	if statusExit != 0 {
+		return fmt.Errorf("preflight git status: exit=%d stderr=%s", statusExit, strings.TrimSpace(statusStderr))
+	}
+	if strings.TrimSpace(statusOut) != "" {
+		return fmt.Errorf("preflight checkout not clean:\n%s", strings.TrimSpace(statusOut))
+	}
+	return nil
+}
+
+func (h *Harness) cleanupRepoRoot(ctx context.Context, repoRoot string, overlayState map[string]repoRootOverlayState) error {
+	if _, stderr, exitCode, err := runCommand(ctx, repoRoot, repoGitEnv(), "git", "reset", "--hard", "HEAD"); err != nil {
+		return fmt.Errorf("git reset --hard HEAD: %w", err)
+	} else if exitCode != 0 {
+		return fmt.Errorf("git reset --hard HEAD: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
+	}
+
+	if _, stderr, exitCode, err := runCommand(ctx, repoRoot, repoGitEnv(), "git", "clean", "-ffd"); err != nil {
+		return fmt.Errorf("git clean -ffd: %w", err)
+	} else if exitCode != 0 {
+		return fmt.Errorf("git clean -ffd: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
+	}
+
+	if err := restoreRepoRootOverlayState(repoRoot, overlayState, "AGENTS.md", "CLAUDE.md"); err != nil {
+		return err
+	}
+	statusOut, statusStderr, statusExit, statusErr := runCommand(ctx, repoRoot, repoGitEnv(), "git", "status", "--porcelain", "--untracked-files=all")
+	if statusErr != nil {
+		return fmt.Errorf("verify cleaned repo root: %w", statusErr)
+	}
+	if statusExit != 0 {
+		return fmt.Errorf("verify cleaned repo root: exit=%d stderr=%s", statusExit, strings.TrimSpace(statusStderr))
+	}
+	if strings.TrimSpace(statusOut) != "" {
+		return fmt.Errorf("verify cleaned repo root left dirty:\n%s", strings.TrimSpace(statusOut))
+	}
+	return nil
+}
+
+func captureGitDiffArtifacts(ctx context.Context, repoRoot, gitIndexPath string, artifacts *RunArtifacts) error {
+	env := repoGitEnv("GIT_INDEX_FILE=" + gitIndexPath)
+	if err := intentUntrackedPathsForDiff(ctx, repoRoot, env); err != nil {
+		return err
+	}
+	diffOut, _, diffExit, diffErr := runCommand(ctx, repoRoot, env, "git", "diff", "--binary", "--no-renames", "HEAD")
+	if diffErr != nil {
+		return fmt.Errorf("capture git diff: %w", diffErr)
+	}
+	if diffExit != 0 {
+		return fmt.Errorf("capture git diff exit code %d", diffExit)
+	}
+	artifacts.GitDiff = diffOut
+
+	nameStatusOut, _, nameStatusExit, nameStatusErr := runCommand(ctx, repoRoot, env, "git", "diff", "--no-renames", "--name-status", "HEAD")
+	if nameStatusErr != nil {
+		return fmt.Errorf("capture git name-status: %w", nameStatusErr)
+	}
+	if nameStatusExit != 0 {
+		return fmt.Errorf("capture git name-status exit code %d", nameStatusExit)
+	}
+	artifacts.GitNameStatus = nameStatusOut
+
+	numstatOut, _, numstatExit, numstatErr := runCommand(ctx, repoRoot, env, "git", "diff", "--no-renames", "--numstat", "HEAD")
+	if numstatErr != nil {
+		return fmt.Errorf("capture git numstat: %w", numstatErr)
+	}
+	if numstatExit != 0 {
+		return fmt.Errorf("capture git numstat exit code %d", numstatExit)
+	}
+	artifacts.GitNumstat = numstatOut
+	return nil
+}
+
+func intentUntrackedPathsForDiff(ctx context.Context, repoRoot string, env []string) error {
+	_, err := intentUntrackedPathsForDiffWithLimit(ctx, repoRoot, env, gitAddIntentBatchByteLimit)
+	return err
+}
+
+func intentUntrackedPathsForDiffWithLimit(ctx context.Context, repoRoot string, env []string, maxBatchBytes int) (int, error) {
+	if maxBatchBytes <= 0 {
+		maxBatchBytes = gitAddIntentBatchByteLimit
+	}
+
+	out, stderr, exitCode, err := runCommand(ctx, repoRoot, env, "git", "ls-files", "--others", "--exclude-standard", "-z")
+	if err != nil {
+		return 0, fmt.Errorf("list untracked paths for diff: %w", err)
+	}
+	if exitCode != 0 {
+		return 0, fmt.Errorf("list untracked paths for diff: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
+	}
+
+	rawPaths := bytes.Split([]byte(out), []byte{0})
+	addPaths := make([]string, 0, len(rawPaths))
+	for _, rawPath := range rawPaths {
+		if len(rawPath) == 0 {
+			continue
+		}
+		relPath := string(rawPath)
+		if isNestedGitRepoPath(repoRoot, relPath) {
+			continue
+		}
+		addPaths = append(addPaths, relPath)
+	}
+	if len(addPaths) == 0 {
+		return 0, nil
+	}
+
+	batches := 0
+	batchPaths := make([]string, 0, len(addPaths))
+	batchBytes := 0
+	flushBatch := func() error {
+		if len(batchPaths) == 0 {
+			return nil
+		}
+		addArgs := append([]string{"add", "-N", "--"}, batchPaths...)
+		if _, stderr, exitCode, err := runCommand(ctx, repoRoot, env, "git", addArgs...); err != nil {
+			return fmt.Errorf("intent add untracked paths for diff: %w", err)
+		} else if exitCode != 0 {
+			return fmt.Errorf("intent add untracked paths for diff: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
+		}
+		batches++
+		batchPaths = batchPaths[:0]
+		batchBytes = 0
+		return nil
+	}
+	for _, relPath := range addPaths {
+		pathBytes := len(relPath) + 1
+		if len(batchPaths) > 0 && batchBytes+pathBytes > maxBatchBytes {
+			if err := flushBatch(); err != nil {
+				return batches, err
+			}
+		}
+		batchPaths = append(batchPaths, relPath)
+		batchBytes += pathBytes
+	}
+	if err := flushBatch(); err != nil {
+		return batches, err
+	}
+	return batches, nil
+}
+
+func isNestedGitRepoPath(repoRoot, relPath string) bool {
+	info, err := os.Stat(filepath.Join(repoRoot, relPath))
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	_, err = os.Stat(filepath.Join(repoRoot, relPath, ".git"))
+	return err == nil
+}
+
 func appendEnvFromHostIfSet(env []string, key string) []string {
 	value, ok := os.LookupEnv(key)
 	if !ok || value == "" {
@@ -452,6 +662,199 @@ func repoHasClnkuSourceTree(repoRoot string) bool {
 	}
 	info, err := os.Stat(filepath.Join(repoRoot, "cmd", "clnku"))
 	return err == nil && info.IsDir()
+}
+
+func captureRepoRootOverlayState(repoRoot string, relPaths ...string) (map[string]repoRootOverlayState, error) {
+	absRepoRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return nil, fmt.Errorf("abs repo root %q: %w", repoRoot, err)
+	}
+	overlayState := make(map[string]repoRootOverlayState, len(relPaths))
+	for _, relPath := range relPaths {
+		state, err := captureRepoRootPathState(absRepoRoot, filepath.Join(absRepoRoot, relPath), map[string]bool{})
+		if err != nil {
+			return nil, err
+		}
+		if state.Present {
+			overlayState[relPath] = state
+		}
+	}
+	return overlayState, nil
+}
+
+func restoreRepoRootOverlayState(repoRoot string, overlayState map[string]repoRootOverlayState, relPaths ...string) error {
+	absRepoRoot, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return fmt.Errorf("abs repo root %q: %w", repoRoot, err)
+	}
+	for _, relPath := range relPaths {
+		state, ok := overlayState[relPath]
+		if !ok || !state.Present {
+			fullPath := filepath.Join(absRepoRoot, relPath)
+			if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("remove overlay %q: %w", fullPath, err)
+			}
+			continue
+		}
+		fullPath := filepath.Join(absRepoRoot, relPath)
+		if err := restoreRepoRootPathState(absRepoRoot, fullPath, state); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func captureRepoRootPathState(absRepoRoot, fullPath string, visited map[string]bool) (repoRootOverlayState, error) {
+	absFullPath, err := filepath.Abs(fullPath)
+	if err != nil {
+		return repoRootOverlayState{}, fmt.Errorf("abs overlay %q: %w", fullPath, err)
+	}
+	if visited[absFullPath] {
+		return repoRootOverlayState{}, nil
+	}
+	visited[absFullPath] = true
+
+	info, err := os.Lstat(absFullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return repoRootOverlayState{}, nil
+		}
+		return repoRootOverlayState{}, fmt.Errorf("stat overlay %q: %w", absFullPath, err)
+	}
+
+	state := repoRootOverlayState{Present: true}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, err := os.Readlink(absFullPath)
+		if err != nil {
+			return repoRootOverlayState{}, fmt.Errorf("read symlink overlay %q: %w", absFullPath, err)
+		}
+		state.IsSymlink = true
+		state.SymlinkTarget = target
+
+		targetPath, ok, err := resolveRepoRootSymlinkTargetPath(absRepoRoot, absFullPath, target)
+		if err != nil {
+			return repoRootOverlayState{}, err
+		}
+		if ok {
+			targetState, err := captureRepoRootPathState(absRepoRoot, targetPath, visited)
+			if err != nil {
+				return repoRootOverlayState{}, err
+			}
+			if targetState.Present {
+				state.SymlinkTargetState = &targetState
+			}
+		}
+		return state, nil
+	}
+
+	if info.IsDir() {
+		return repoRootOverlayState{}, fmt.Errorf("overlay %q is a directory, want file or symlink", absFullPath)
+	}
+	content, err := os.ReadFile(absFullPath)
+	if err != nil {
+		return repoRootOverlayState{}, fmt.Errorf("read overlay %q: %w", absFullPath, err)
+	}
+	state.Content = content
+	state.Mode = info.Mode().Perm()
+	return state, nil
+}
+
+func restoreRepoRootPathState(absRepoRoot, fullPath string, state repoRootOverlayState) error {
+	if !state.Present {
+		if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove overlay %q: %w", fullPath, err)
+		}
+		return nil
+	}
+	if state.IsSymlink {
+		if state.SymlinkTargetState != nil {
+			targetPath, ok, err := resolveRepoRootSymlinkTargetPath(absRepoRoot, fullPath, state.SymlinkTarget)
+			if err != nil {
+				return err
+			}
+			if ok {
+				if err := restoreRepoRootPathState(absRepoRoot, targetPath, *state.SymlinkTargetState); err != nil {
+					return err
+				}
+			}
+		}
+		if err := ensureOverlayParentDir(fullPath); err != nil {
+			return err
+		}
+		if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove symlink overlay %q: %w", fullPath, err)
+		}
+		if err := os.Symlink(state.SymlinkTarget, fullPath); err != nil {
+			return fmt.Errorf("restore symlink overlay %q: %w", fullPath, err)
+		}
+		return nil
+	}
+	if err := ensureOverlayParentDir(fullPath); err != nil {
+		return err
+	}
+	if err := os.WriteFile(fullPath, state.Content, state.Mode); err != nil {
+		return fmt.Errorf("restore overlay %q: %w", fullPath, err)
+	}
+	if err := os.Chmod(fullPath, state.Mode); err != nil {
+		return fmt.Errorf("chmod overlay %q: %w", fullPath, err)
+	}
+	return nil
+}
+
+func resolveRepoRootSymlinkTargetPath(absRepoRoot, symlinkPath, target string) (string, bool, error) {
+	targetPath := target
+	if !filepath.IsAbs(targetPath) {
+		targetPath = filepath.Join(filepath.Dir(symlinkPath), targetPath)
+	}
+	absTargetPath, err := filepath.Abs(targetPath)
+	if err != nil {
+		return "", false, fmt.Errorf("abs symlink target %q: %w", targetPath, err)
+	}
+	rel, err := filepath.Rel(absRepoRoot, absTargetPath)
+	if err != nil {
+		return "", false, fmt.Errorf("rel symlink target %q from %q: %w", absTargetPath, absRepoRoot, err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", false, nil
+	}
+	return absTargetPath, true, nil
+}
+
+func ensureOverlayParentDir(fullPath string) error {
+	dir := filepath.Dir(fullPath)
+	if dir == "." {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create overlay parent dir %q: %w", dir, err)
+	}
+	return nil
+}
+
+func repoGitIndexPath(ctx context.Context, repoRoot string) (string, error) {
+	out, stderr, exitCode, err := runCommand(ctx, repoRoot, repoGitEnv(), "git", "rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "", fmt.Errorf("resolve git dir: %w", err)
+	}
+	if exitCode != 0 {
+		return "", fmt.Errorf("resolve git dir: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
+	}
+	gitDir := strings.TrimSpace(out)
+	if gitDir == "" {
+		return "", fmt.Errorf("resolve git dir: empty output")
+	}
+	return filepath.Join(gitDir, "index"), nil
+}
+
+func copyFile(src, dst string) error {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return fmt.Errorf("read %q: %w", src, err)
+	}
+	if err := os.WriteFile(dst, data, 0o600); err != nil {
+		return fmt.Errorf("write %q: %w", dst, err)
+	}
+	return nil
 }
 
 func createTempFilePath(dir, pattern string) (string, error) {
@@ -565,41 +968,6 @@ func copyProjectAgents(srcDir, workspaceDir string) error {
 		return fmt.Errorf("write workspace AGENTS.md: %w", err)
 	}
 	return nil
-}
-
-func snapshotWorkspace(root string) (map[string]string, error) {
-	files := map[string]string{}
-	if _, err := os.Stat(root); err != nil {
-		if os.IsNotExist(err) {
-			return files, nil
-		}
-		return nil, fmt.Errorf("stat workspace %q: %w", root, err)
-	}
-
-	if err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if d.IsDir() {
-			return nil
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		if filepath.Base(rel) == ".gitkeep" {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		files[filepath.ToSlash(rel)] = string(data)
-		return nil
-	}); err != nil {
-		return nil, fmt.Errorf("walk workspace %q: %w", root, err)
-	}
-	return files, nil
 }
 
 func collectProviderResponses(requests []CapturedRequest) []string {

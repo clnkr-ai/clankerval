@@ -1,4 +1,4 @@
 [
-  "{\"type\":\"act\",\"command\":\"printf 'hello\\\\n' > note.txt\"}",
+  "{\"type\":\"act\",\"command\":\"printf 'hello\\\\n' > testdata/evaluations/fixtures/dummy/001-basic/note.txt\"}",
   "{\"type\":\"done\",\"summary\":\"fixture task completed\"}"
 ]

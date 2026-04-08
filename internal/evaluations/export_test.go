@@ -31,7 +31,7 @@ func TestBuildRunReport(t *testing.T) {
 				trialAttempt:   0,
 				trialPassed:    false,
 				failedRequiredGraders: []GraderResult{
-					{GraderID: "outcome_workspace_snapshot", TargetKind: "outcome", Passed: false, Message: "missing note.txt"},
+					{GraderID: "outcome_diff", TargetKind: "outcome", Passed: false, Message: "missing diff"},
 				},
 			}),
 			mustLoadedTrialBundle(t, trialBundleSpec{
@@ -170,7 +170,7 @@ func TestBuildRunReport(t *testing.T) {
 				trialAttempt:   1,
 				trialPassed:    false,
 				failedRequiredGraders: []GraderResult{
-					{GraderID: "outcome_workspace_snapshot", TargetKind: "outcome", Passed: false, Message: "missing note.txt"},
+					{GraderID: "outcome_diff", TargetKind: "outcome", Passed: false, Message: "missing diff"},
 				},
 			}),
 		}
@@ -214,7 +214,7 @@ func TestExportOpenTestReport(t *testing.T) {
 			trialAttempt:   0,
 			trialPassed:    false,
 			failedRequiredGraders: []GraderResult{
-				{GraderID: "outcome_workspace_snapshot", TargetKind: "outcome", Passed: false, Message: "missing note.txt"},
+				{GraderID: "outcome_diff", TargetKind: "outcome", Passed: false, Message: "missing diff"},
 			},
 		}),
 		mustLoadedTrialBundle(t, trialBundleSpec{
@@ -272,7 +272,7 @@ func TestExportOpenTestReport(t *testing.T) {
 		"status": "FAILED",
 	})
 	assertDeterministicElementOrder(t, elems, "started", "id", []string{"trial:suite-a:clnku:0:0:trial-z", "trial:suite-a:clnku:1:0:trial-a", "trial:suite-a:clnku:1:1:trial-c"})
-	if !strings.Contains(string(data), "missing note.txt") || !strings.Contains(string(data), "outcome_workspace_snapshot") {
+	if !strings.Contains(string(data), "missing diff") || !strings.Contains(string(data), "outcome_diff") {
 		t.Fatalf("report missing failure context: %q", string(data))
 	}
 }
@@ -297,7 +297,7 @@ func TestExportJUnit(t *testing.T) {
 			trialAttempt:   0,
 			trialPassed:    false,
 			failedRequiredGraders: []GraderResult{
-				{GraderID: "outcome_workspace_snapshot", TargetKind: "outcome", Passed: false, Message: "missing note.txt"},
+				{GraderID: "outcome_diff", TargetKind: "outcome", Passed: false, Message: "missing diff"},
 			},
 		}),
 		mustLoadedTrialBundle(t, trialBundleSpec{
@@ -329,7 +329,7 @@ func TestExportJUnit(t *testing.T) {
 	if !strings.Contains(content, "<testsuites") || !strings.Contains(content, "<testsuite") || !strings.Contains(content, "<testcase") {
 		t.Fatalf("JUnit output missing expected elements: %q", content)
 	}
-	if !strings.Contains(content, "missing note.txt") || !strings.Contains(content, "outcome_workspace_snapshot") {
+	if !strings.Contains(content, "missing diff") || !strings.Contains(content, "outcome_diff") {
 		t.Fatalf("JUnit output missing failure context: %q", content)
 	}
 	// Agent must appear in JUnit classname so the same task under different agents doesn't collide.

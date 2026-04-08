@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -40,19 +41,12 @@ type NormalizedTranscriptRecord struct {
 
 // NormalizedOutcome summarizes the final trial state for grading and export.
 type NormalizedOutcome struct {
-	FinalExitCode     int                       `json:"final_exit_code"`
-	FinalCwd          string                    `json:"final_cwd"`
-	WorkspaceFiles    []NormalizedWorkspaceFile `json:"workspace_files"`
-	MaterializedPaths []string                  `json:"materialized_paths"`
+	FinalExitCode    int      `json:"final_exit_code"`
+	FinalCwd         string   `json:"final_cwd"`
+	DiffPresent      bool     `json:"diff_present"`
+	ChangedPaths     []string `json:"changed_paths"`
+	ChangedFileCount int      `json:"changed_file_count"`
 }
-
-// NormalizedWorkspaceFile describes one materialized workspace file.
-type NormalizedWorkspaceFile struct {
-	Path      string `json:"path"`
-	SizeBytes int64  `json:"size_bytes"`
-	SHA256    string `json:"sha256"`
-}
-
 
 // NormalizeTranscript projects a stable transcript record sequence from
 // adapter-supplied TranscriptEvents and Commands. Path and text normalization
@@ -153,7 +147,7 @@ func NormalizeTranscript(artifacts RunArtifacts) ([]NormalizedTranscriptRecord, 
 // NormalizeOutcome derives a stable end-state summary from raw trial artifacts.
 // Final cwd is derived from the last state_update TranscriptEvent rather than
 // re-parsing agent-specific transcript payloads.
-func NormalizeOutcome(artifacts RunArtifacts, outcomeWorkspaceRel string) (NormalizedOutcome, error) {
+func NormalizeOutcome(artifacts RunArtifacts) (NormalizedOutcome, error) {
 	finalCwd := ""
 	for i := len(artifacts.TranscriptEvents) - 1; i >= 0; i-- {
 		ev := artifacts.TranscriptEvents[i]
@@ -163,32 +157,61 @@ func NormalizeOutcome(artifacts RunArtifacts, outcomeWorkspaceRel string) (Norma
 		}
 	}
 
-	workspacePaths := make([]string, 0, len(artifacts.Workspace))
-	for path := range artifacts.Workspace {
-		workspacePaths = append(workspacePaths, path)
-	}
-	sort.Strings(workspacePaths)
-
-	files := make([]NormalizedWorkspaceFile, 0, len(workspacePaths))
-	materialized := make([]string, 0, len(workspacePaths))
-	for _, path := range workspacePaths {
-		content := artifacts.Workspace[path]
-		files = append(files, NormalizedWorkspaceFile{
-			Path:      filepath.ToSlash(path),
-			SizeBytes: int64(len(content)),
-			SHA256:    checksumSHA256String(content),
-		})
-		materialized = append(materialized, filepath.ToSlash(filepath.Join(outcomeWorkspaceRel, path)))
-	}
-
 	return NormalizedOutcome{
-		FinalExitCode:     artifacts.ExitCode,
-		FinalCwd:          finalCwd,
-		WorkspaceFiles:    files,
-		MaterializedPaths: materialized,
+		FinalExitCode:    artifacts.ExitCode,
+		FinalCwd:         finalCwd,
+		DiffPresent:      strings.TrimSpace(artifacts.GitDiff) != "",
+		ChangedPaths:     parseGitNameStatusChangedPaths(artifacts.GitNameStatus),
+		ChangedFileCount: parseGitNumstatChangedFileCount(artifacts.GitNumstat),
 	}, nil
 }
 
+func parseGitNameStatusChangedPaths(nameStatus string) []string {
+	lines := splitNonEmptyLines(nameStatus)
+	paths := make([]string, 0, len(lines))
+	for _, line := range lines {
+		fields := strings.Split(line, "\t")
+		if len(fields) < 2 {
+			continue
+		}
+		for _, field := range fields[1:] {
+			path := parseGitPathToken(field)
+			if path == "" {
+				continue
+			}
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+func parseGitNumstatChangedFileCount(numstat string) int {
+	return len(splitNonEmptyLines(numstat))
+}
+
+func splitNonEmptyLines(value string) []string {
+	lines := strings.Split(value, "\n")
+	trimmed := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if line = strings.TrimSpace(line); line != "" {
+			trimmed = append(trimmed, line)
+		}
+	}
+	return trimmed
+}
+
+func parseGitPathToken(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ""
+	}
+	if len(token) >= 2 && token[0] == '"' && token[len(token)-1] == '"' {
+		if unquoted, err := strconv.Unquote(token); err == nil {
+			return filepath.ToSlash(unquoted)
+		}
+	}
+	return filepath.ToSlash(token)
+}
 
 func normalizeText(value string, roots normalizationRoots) string {
 	if value == "" {
@@ -285,11 +308,6 @@ func buildPathReplacements(roots normalizationRoots) []pathReplacement {
 		return replacements[i].priority < replacements[j].priority
 	})
 	return replacements
-}
-
-
-func checksumSHA256String(value string) string {
-	return checksumSHA256Bytes([]byte(value))
 }
 
 func checksumSHA256Bytes(value []byte) string {

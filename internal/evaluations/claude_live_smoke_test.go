@@ -36,8 +36,8 @@ func TestClaudeLiveSmokeFixtureLoads(t *testing.T) {
 	if tasks[0].ID != "001-fix-failing-test" {
 		t.Fatalf("task id = %q, want %q", tasks[0].ID, "001-fix-failing-test")
 	}
-	if tasks[0].WorkingDirectory != "workspace" {
-		t.Fatalf("working_directory = %q, want %q", tasks[0].WorkingDirectory, "workspace")
+	if tasks[0].WorkingDirectory != "." {
+		t.Fatalf("working_directory = %q, want %q", tasks[0].WorkingDirectory, ".")
 	}
 	if !tasks[0].Graders.OutcomeCommandOutput.Enabled || !tasks[0].Graders.OutcomeCommandOutput.Required {
 		t.Fatalf("outcome_command_output grader = %#v, want enabled required", tasks[0].Graders.OutcomeCommandOutput)
@@ -55,15 +55,11 @@ func TestClaudeLiveSmokeSuite(t *testing.T) {
 		t.Skip("skipping: ANTHROPIC_API_KEY is not set")
 	}
 
-	repoRoot := newTempRepoRoot(t)
-	fixtureRoot := claudeLiveSmokeFixtureRoot(t)
-	if err := copyTree(fixtureRoot, filepath.Join(repoRoot, "evaluations", "suites", "claude-live-smoke")); err != nil {
-		t.Fatalf("copy live smoke fixture: %v", err)
-	}
-	cleanupGeneratedRunOutput(t, repoRoot)
-	t.Cleanup(func() {
-		cleanupGeneratedRunOutput(t, repoRoot)
-	})
+	lockRealRepoForTest(t)
+	repoRoot := moduleRoot(t)
+	requireCleanRealRepoForTest(t, repoRoot)
+	evalsDir := filepath.Join(repoRoot, "testdata", "evaluations")
+	outputDir := t.TempDir()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -79,6 +75,8 @@ func TestClaudeLiveSmokeSuite(t *testing.T) {
 			BaseURL: "https://api.anthropic.com",
 			Model:   "claude-code-default",
 		},
+		WithSuiteEvalsDir(evalsDir),
+		WithSuiteOutputDir(outputDir),
 	)
 	if err != nil {
 		t.Fatalf("RunSuite(): %v", err)

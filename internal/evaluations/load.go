@@ -39,10 +39,9 @@ type taskJSON struct {
 }
 
 type graderJSON struct {
-	TranscriptCommandTrace   *transcriptCommandTraceJSON   `json:"transcript_command_trace"`
-	OutcomeWorkspaceSnapshot *outcomeWorkspaceSnapshotJSON `json:"outcome_workspace_snapshot"`
-	OutcomeDiff              *outcomeDiffJSON              `json:"outcome_diff"`
-	OutcomeCommandOutput     *outcomeCommandOutputJSON     `json:"outcome_command_output"`
+	TranscriptCommandTrace *transcriptCommandTraceJSON `json:"transcript_command_trace"`
+	OutcomeDiff            *outcomeDiffJSON            `json:"outcome_diff"`
+	OutcomeCommandOutput   *outcomeCommandOutputJSON   `json:"outcome_command_output"`
 }
 
 type outcomeDiffJSON struct {
@@ -56,11 +55,6 @@ type transcriptCommandTraceJSON struct {
 	ExpectedCommands  []string `json:"expected_commands"`
 	ExpectedExitCodes []int    `json:"expected_exit_codes"`
 	MaxCommandCount   *int     `json:"max_command_count"`
-}
-
-type outcomeWorkspaceSnapshotJSON struct {
-	Enabled  *bool `json:"enabled"`
-	Required *bool `json:"required"`
 }
 
 type outcomeCommandOutputJSON struct {
@@ -246,6 +240,9 @@ func validateTaskJSON(path string, raw taskJSON) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
+	if workingDirectory != "." {
+		return Task{}, fmt.Errorf("%s: field %q must be %q, got %q", path, "working_directory", ".", workingDirectory)
+	}
 	if err := validateTaskRelativePath(taskRoot, path, "working_directory", workingDirectory, true); err != nil {
 		return Task{}, err
 	}
@@ -314,14 +311,6 @@ func validateTaskJSON(path string, raw taskJSON) (Task, error) {
 }
 
 func validateGradersJSON(path string, raw graderJSON) (GraderConfig, error) {
-	var outcomeWorkspaceSnapshot OutcomeWorkspaceSnapshotConfig
-	if raw.OutcomeWorkspaceSnapshot != nil {
-		var err error
-		outcomeWorkspaceSnapshot, err = validateOutcomeWorkspaceSnapshotJSON(path, raw.OutcomeWorkspaceSnapshot)
-		if err != nil {
-			return GraderConfig{}, err
-		}
-	}
 	var outcomeDiff OutcomeDiffConfig
 	if raw.OutcomeDiff != nil {
 		var err error
@@ -343,28 +332,9 @@ func validateGradersJSON(path string, raw graderJSON) (GraderConfig, error) {
 		return GraderConfig{}, err
 	}
 	return GraderConfig{
-		OutcomeWorkspaceSnapshot: outcomeWorkspaceSnapshot,
-		OutcomeDiff:              outcomeDiff,
-		TranscriptCommandTrace:   transcriptCommandTrace,
-		OutcomeCommandOutput:     outcomeCommandOutput,
-	}, nil
-}
-
-func validateOutcomeWorkspaceSnapshotJSON(path string, raw *outcomeWorkspaceSnapshotJSON) (OutcomeWorkspaceSnapshotConfig, error) {
-	if raw == nil {
-		return OutcomeWorkspaceSnapshotConfig{}, nil
-	}
-	enabled, err := requiredBool(path, "graders.outcome_workspace_snapshot.enabled", raw.Enabled)
-	if err != nil {
-		return OutcomeWorkspaceSnapshotConfig{}, err
-	}
-	required, err := requiredBool(path, "graders.outcome_workspace_snapshot.required", raw.Required)
-	if err != nil {
-		return OutcomeWorkspaceSnapshotConfig{}, err
-	}
-	return OutcomeWorkspaceSnapshotConfig{
-		Enabled:  enabled,
-		Required: required,
+		OutcomeDiff:            outcomeDiff,
+		TranscriptCommandTrace: transcriptCommandTrace,
+		OutcomeCommandOutput:   outcomeCommandOutput,
 	}, nil
 }
 

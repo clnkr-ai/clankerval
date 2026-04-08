@@ -91,12 +91,12 @@ func TestLoadTaskAgent(t *testing.T) {
   "id": "001-basic-edit",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "agent": "clnku",
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "enabled": true,
       "required": true
     },
@@ -123,11 +123,11 @@ func TestLoadTaskAgent(t *testing.T) {
   "id": "001-basic-edit",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "enabled": true,
       "required": true
     },
@@ -154,12 +154,12 @@ func TestLoadTaskAgent(t *testing.T) {
   "id": "001-basic-edit",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "agent": "bogus",
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "enabled": true,
       "required": true
     },
@@ -302,10 +302,37 @@ func TestLoadTask(t *testing.T) {
 	t.Run("missing required fields", func(t *testing.T) {
 		dir := t.TempDir()
 		path := filepath.Join(dir, "task.json")
-		writeTestFile(t, path, `{"id":"001-basic-edit","graders":{"outcome_workspace_snapshot":{"enabled":true,"required":true},"transcript_command_trace":{"enabled":true,"required":false}}}`)
+		writeTestFile(t, path, `{"id":"001-basic-edit","graders":{"outcome_diff":{"enabled":true,"required":true},"transcript_command_trace":{"enabled":true,"required":false}}}`)
 
 		if _, err := LoadTask(path); err == nil {
 			t.Fatal("LoadTask() error = nil, want validation failure")
+		}
+	})
+
+	t.Run("rejects unknown grader key", func(t *testing.T) {
+		dir := t.TempDir()
+		path := filepath.Join(dir, "task.json")
+		writeTestFile(t, path, `{
+  "id": "001-basic-edit",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": ".",
+  "step_limit": 10,
+  "full_send": true,
+  "graders": {
+    "unknown_grader": {
+      "enabled": true,
+      "required": true
+    }
+  }
+}`)
+
+		_, err := LoadTask(path)
+		if err == nil {
+			t.Fatal("LoadTask() error = nil, want unknown grader rejection")
+		}
+		if !strings.Contains(err.Error(), "unknown_grader") {
+			t.Fatalf("error = %v, want unknown grader rejection", err)
 		}
 	})
 
@@ -316,11 +343,11 @@ func TestLoadTask(t *testing.T) {
   "id": "001-basic-edit",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "required": true
     },
     "transcript_command_trace": {
@@ -342,12 +369,12 @@ func TestLoadTask(t *testing.T) {
   "id": "001-basic-edit",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "mode": "bogus",
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "enabled": true,
       "required": true
     },
@@ -370,11 +397,11 @@ func TestLoadTask(t *testing.T) {
   "id": "001-basic-edit",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "enabled": true,
       "required": true
     },
@@ -398,8 +425,8 @@ func TestLoadTask(t *testing.T) {
 		if got.ScriptedTurnsFile != "input/model-turns.json" {
 			t.Fatalf("scripted_turns_file = %q, want %q", got.ScriptedTurnsFile, "input/model-turns.json")
 		}
-		if got.WorkingDirectory != "workspace" {
-			t.Fatalf("working_directory = %q, want %q", got.WorkingDirectory, "workspace")
+		if got.WorkingDirectory != "." {
+			t.Fatalf("working_directory = %q, want %q", got.WorkingDirectory, ".")
 		}
 		if !got.FullSend {
 			t.Fatal("full_send = false, want true")
@@ -407,8 +434,8 @@ func TestLoadTask(t *testing.T) {
 		if got.StepLimit != 10 {
 			t.Fatalf("step_limit = %d, want 10", got.StepLimit)
 		}
-		if !got.Graders.OutcomeWorkspaceSnapshot.Enabled || !got.Graders.OutcomeWorkspaceSnapshot.Required {
-			t.Fatalf("outcome_workspace_snapshot = %#v, want enabled+required", got.Graders.OutcomeWorkspaceSnapshot)
+		if !got.Graders.OutcomeDiff.Enabled || !got.Graders.OutcomeDiff.Required {
+			t.Fatalf("outcome_diff = %#v, want enabled+required", got.Graders.OutcomeDiff)
 		}
 		if !got.Graders.TranscriptCommandTrace.Enabled || got.Graders.TranscriptCommandTrace.Required {
 			t.Fatalf("transcript_command_trace = %#v, want enabled and not required", got.Graders.TranscriptCommandTrace)
@@ -420,11 +447,11 @@ func TestLoadTask(t *testing.T) {
 		writeTestFile(t, filepath.Join(dir, "task.json"), `{
 			"id": "cmd-test",
 			"instruction_file": "input/instruction.txt",
-			"working_directory": "workspace",
+			"working_directory": ".",
 			"step_limit": 5,
 			"full_send": true,
 			"graders": {
-				"outcome_workspace_snapshot": {"enabled": false, "required": false},
+				"outcome_diff": {"enabled": false, "required": false},
 				"transcript_command_trace": {"enabled": false, "required": false},
 				"outcome_command_output": {
 					"enabled": true,
@@ -458,11 +485,11 @@ func TestLoadTask(t *testing.T) {
 		writeTestFile(t, filepath.Join(dir, "task.json"), `{
 			"id": "no-cmd",
 			"instruction_file": "input/instruction.txt",
-			"working_directory": "workspace",
+			"working_directory": ".",
 			"step_limit": 5,
 			"full_send": true,
 			"graders": {
-				"outcome_workspace_snapshot": {"enabled": true, "required": true},
+				"outcome_diff": {"enabled": true, "required": true},
 				"transcript_command_trace": {"enabled": false, "required": false}
 			}
 		}`)
@@ -480,11 +507,11 @@ func TestLoadTask(t *testing.T) {
 		writeTestFile(t, filepath.Join(dir, "task.json"), `{
 			"id": "bad-cmd",
 			"instruction_file": "input/instruction.txt",
-			"working_directory": "workspace",
+			"working_directory": ".",
 			"step_limit": 5,
 			"full_send": true,
 			"graders": {
-				"outcome_workspace_snapshot": {"enabled": false, "required": false},
+				"outcome_diff": {"enabled": false, "required": false},
 				"transcript_command_trace": {"enabled": false, "required": false},
 				"outcome_command_output": {
 					"enabled": true,
@@ -512,14 +539,14 @@ func TestLoadTask(t *testing.T) {
 				name:              "instruction file escapes task root",
 				instructionFile:   "../input/instruction.txt",
 				scriptedTurnsFile: "input/model-turns.json",
-				workingDirectory:  "workspace",
+				workingDirectory:  ".",
 				wantErrPart:       `"instruction_file"`,
 			},
 			{
 				name:              "scripted turns file escapes task root",
 				instructionFile:   "input/instruction.txt",
 				scriptedTurnsFile: "../input/model-turns.json",
-				workingDirectory:  "workspace",
+				workingDirectory:  ".",
 				wantErrPart:       `"scripted_turns_file"`,
 			},
 			{
@@ -527,21 +554,21 @@ func TestLoadTask(t *testing.T) {
 				instructionFile:    "input/instruction.txt",
 				scriptedTurnsFile:  "input/model-turns.json",
 				seedTranscriptFile: "../input/seed.json",
-				workingDirectory:   "workspace",
+				workingDirectory:   ".",
 				wantErrPart:        `"seed_transcript_file"`,
 			},
 			{
-				name:              "working directory escapes task root",
+				name:              "working directory must be dot",
 				instructionFile:   "input/instruction.txt",
 				scriptedTurnsFile: "input/model-turns.json",
-				workingDirectory:  "../workspace",
-				wantErrPart:       `"working_directory"`,
+				workingDirectory:  "workspace",
+				wantErrPart:       `must be "."`,
 			},
 			{
 				name:              "absolute instruction file rejected",
 				instructionFile:   "/tmp/instruction.txt",
 				scriptedTurnsFile: "input/model-turns.json",
-				workingDirectory:  "workspace",
+				workingDirectory:  ".",
 				wantErrPart:       `"instruction_file"`,
 			},
 		}
@@ -559,7 +586,7 @@ func TestLoadTask(t *testing.T) {
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "enabled": true,
       "required": true
     },
@@ -579,6 +606,12 @@ func TestLoadTask(t *testing.T) {
 				if err == nil {
 					t.Fatal("LoadTask() error = nil, want validation failure")
 				}
+				if tt.wantErrPart == `must be "."` {
+					if !strings.Contains(err.Error(), "working_directory") || !strings.Contains(err.Error(), tt.wantErrPart) {
+						t.Fatalf("error = %v, want working_directory validation for %s", err, tt.wantErrPart)
+					}
+					return
+				}
 				if !strings.Contains(err.Error(), tt.wantErrPart) || !strings.Contains(err.Error(), "must stay within task root") {
 					t.Fatalf("error = %v, want task-root validation for %s", err, tt.wantErrPart)
 				}
@@ -596,7 +629,7 @@ func TestLoadTask(t *testing.T) {
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "enabled": true,
       "required": true
     },
@@ -635,11 +668,11 @@ func TestLoadSuiteTasks(t *testing.T) {
   "id": "a-task",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "enabled": true,
       "required": true
     },
@@ -653,11 +686,11 @@ func TestLoadSuiteTasks(t *testing.T) {
   "id": "b-task",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "enabled": true,
       "required": true
     },
@@ -701,11 +734,11 @@ func TestLoadSuiteTasks(t *testing.T) {
   "id": "001-basic-edit",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "enabled": true,
       "required": true
     },
@@ -746,11 +779,11 @@ func TestLoadSuiteTasks(t *testing.T) {
   "id": "other-id",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "enabled": true,
       "required": true
     },
@@ -787,11 +820,11 @@ func TestLoadSuiteTasks(t *testing.T) {
   "id": "dup",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "enabled": true,
       "required": true
     },
@@ -850,11 +883,11 @@ func TestLoadSuiteTasks(t *testing.T) {
 		writeTestFile(t, filepath.Join(root, "tasks", "001-basic-edit", "task.json"), `{
   "id": "001-basic-edit",
   "instruction_file": "input/instruction.txt",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "full_send": true,
   "step_limit": 10,
   "graders": {
-    "outcome_workspace_snapshot": {
+    "outcome_diff": {
       "enabled": true,
       "required": true
     },

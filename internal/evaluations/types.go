@@ -59,10 +59,9 @@ type TrialPolicyResult struct {
 
 // GraderConfig groups the supported first-wave graders.
 type GraderConfig struct {
-	TranscriptCommandTrace   TranscriptCommandTraceConfig
-	OutcomeWorkspaceSnapshot OutcomeWorkspaceSnapshotConfig
-	OutcomeDiff              OutcomeDiffConfig
-	OutcomeCommandOutput     OutcomeCommandOutputConfig
+	TranscriptCommandTrace TranscriptCommandTraceConfig
+	OutcomeDiff            OutcomeDiffConfig
+	OutcomeCommandOutput   OutcomeCommandOutputConfig
 }
 
 // OutcomeDiffConfig validates that the agent produced a non-empty git diff.
@@ -78,12 +77,6 @@ type TranscriptCommandTraceConfig struct {
 	ExpectedCommands  []string
 	ExpectedExitCodes []int
 	MaxCommandCount   int
-}
-
-// OutcomeWorkspaceSnapshotConfig validates the final workspace snapshot.
-type OutcomeWorkspaceSnapshotConfig struct {
-	Enabled  bool
-	Required bool
 }
 
 // OutcomeCommandOutputConfig runs a command against the outcome workspace and checks its output.
