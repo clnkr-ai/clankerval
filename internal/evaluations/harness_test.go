@@ -1640,12 +1640,12 @@ func TestRunTrial(t *testing.T) {
   "id": "claude-base-url",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "step_limit": 5,
   "full_send": true,
   "agent": "claude",
   "graders": {
-    "outcome_workspace_snapshot": { "enabled": false, "required": false },
+    "outcome_diff": { "enabled": false, "required": false },
     "transcript_command_trace": { "enabled": false, "required": false }
   }
 }`,
@@ -1684,12 +1684,12 @@ func TestRunTrial(t *testing.T) {
   "id": "claude-disable-betas",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "step_limit": 5,
   "full_send": true,
   "agent": "claude",
   "graders": {
-    "outcome_workspace_snapshot": { "enabled": false, "required": false },
+    "outcome_diff": { "enabled": false, "required": false },
     "transcript_command_trace": { "enabled": false, "required": false }
   }
 }`,
@@ -1728,7 +1728,7 @@ func TestRunTrial(t *testing.T) {
   "id": "mise-yes-clnku",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "step_limit": 5,
   "full_send": true,
   "graders": {}
@@ -1768,12 +1768,12 @@ func TestRunTrial(t *testing.T) {
   "id": "mise-yes-claude",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "step_limit": 5,
   "full_send": true,
   "agent": "claude",
   "graders": {
-    "outcome_workspace_snapshot": { "enabled": false, "required": false },
+    "outcome_diff": { "enabled": false, "required": false },
     "transcript_command_trace": { "enabled": false, "required": false }
   }
 }`,
@@ -1813,7 +1813,7 @@ func TestRunTrial(t *testing.T) {
   "id": "clnku-no-claude-env",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
-  "working_directory": "workspace",
+  "working_directory": ".",
   "step_limit": 5,
   "full_send": true,
   "graders": {}
