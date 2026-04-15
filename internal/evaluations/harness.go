@@ -515,10 +515,10 @@ func (h *Harness) cleanupRepoRoot(ctx context.Context, repoRoot string, overlayS
 		return fmt.Errorf("git reset --hard HEAD: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
 	}
 
-	if _, stderr, exitCode, err := runCommand(ctx, repoRoot, repoGitEnv(), "git", "clean", "-ffd"); err != nil {
-		return fmt.Errorf("git clean -ffd: %w", err)
+	if _, stderr, exitCode, err := runCommand(ctx, repoRoot, repoGitEnv(), "git", "clean", "-ffdx", "-e", "eval-results*"); err != nil {
+		return fmt.Errorf("git clean -ffdx: %w", err)
 	} else if exitCode != 0 {
-		return fmt.Errorf("git clean -ffd: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
+		return fmt.Errorf("git clean -ffdx: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
 	}
 
 	if err := restoreRepoRootOverlayState(repoRoot, overlayState, "AGENTS.md", "CLAUDE.md"); err != nil {

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -56,6 +57,7 @@ func (a *claudeAdapter) Run(ctx context.Context, req AdapterRequest) (AdapterRes
 		"--dangerously-skip-permissions",
 		"--output-format", "json",
 		"--add-dir", req.WorkspaceDir,
+		"--max-turns", strconv.Itoa(req.Task.StepLimit),
 	}
 
 	if seedBootstrapped {
