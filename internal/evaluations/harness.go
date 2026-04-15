@@ -515,7 +515,7 @@ func (h *Harness) cleanupRepoRoot(ctx context.Context, repoRoot string, overlayS
 		return fmt.Errorf("git reset --hard HEAD: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
 	}
 
-	if _, stderr, exitCode, err := runCommand(ctx, repoRoot, repoGitEnv(), "git", "clean", "-ffdx", "-e", "eval-results*"); err != nil {
+	if _, stderr, exitCode, err := runCommand(ctx, repoRoot, repoGitEnv(), "git", "clean", "-ffdx", "-e", "eval-results*", "-e", "tmp/certs/", "-e", "vendor/", "-e", "log/"); err != nil {
 		return fmt.Errorf("git clean -ffdx: %w", err)
 	} else if exitCode != 0 {
 		return fmt.Errorf("git clean -ffdx: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
