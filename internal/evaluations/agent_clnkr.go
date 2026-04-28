@@ -15,10 +15,10 @@ import (
 	"github.com/clnkr-ai/clankerval/internal/transcript"
 )
 
-// clnkuAdapter implements AgentAdapter for the clnku agent binary.
-type clnkuAdapter struct{}
+// clnkrAdapter implements AgentAdapter for the clnkr agent binary.
+type clnkrAdapter struct{}
 
-func (a *clnkuAdapter) Run(ctx context.Context, req AdapterRequest) (AdapterResult, error) {
+func (a *clnkrAdapter) Run(ctx context.Context, req AdapterRequest) (AdapterResult, error) {
 	// Stage project AGENTS.md into workspace for non-in-place tasks.
 	if req.Task.WorkingDirectory != "." {
 		if err := copyProjectAgents(filepath.Join(req.TaskRoot, "input", "project"), req.WorkspaceDir); err != nil {
@@ -90,15 +90,15 @@ func (a *clnkuAdapter) Run(ctx context.Context, req AdapterRequest) (AdapterResu
 	trajectory := string(trajectoryBytes)
 	eventLog := string(eventLogBytes)
 
-	// Translate clnku native outputs into generic fields.
-	commands, err := extractClnkuCommands(eventLog)
+	// Translate clnkr native outputs into generic fields.
+	commands, err := extractClnkrCommands(eventLog)
 	if err != nil {
-		return AdapterResult{}, fmt.Errorf("extract clnku commands: %w", err)
+		return AdapterResult{}, fmt.Errorf("extract clnkr commands: %w", err)
 	}
 
-	transcriptEvents, err := extractClnkuTranscriptEvents(trajectory)
+	transcriptEvents, err := extractClnkrTranscriptEvents(trajectory)
 	if err != nil {
-		return AdapterResult{}, fmt.Errorf("extract clnku transcript events: %w", err)
+		return AdapterResult{}, fmt.Errorf("extract clnkr transcript events: %w", err)
 	}
 
 	rawArtifacts := []RawAgentArtifact{
@@ -118,8 +118,8 @@ func (a *clnkuAdapter) Run(ctx context.Context, req AdapterRequest) (AdapterResu
 	}, nil
 }
 
-// extractClnkuCommands parses the clnku event log and returns generic CommandRecords.
-func extractClnkuCommands(eventLog string) ([]CommandRecord, error) {
+// extractClnkrCommands parses the clnkr event log and returns generic CommandRecords.
+func extractClnkrCommands(eventLog string) ([]CommandRecord, error) {
 	starts, dones, err := parseCommandLifecycleEvents(eventLog)
 	if err != nil {
 		return nil, err
@@ -140,19 +140,19 @@ func extractClnkuCommands(eventLog string) ([]CommandRecord, error) {
 	return commands, nil
 }
 
-// clnkuTrajectoryMessage mirrors the trajectory JSON structure for extraction.
-type clnkuTrajectoryMessage struct {
+// clnkrTrajectoryMessage mirrors the trajectory JSON structure for extraction.
+type clnkrTrajectoryMessage struct {
 	Role    string `json:"role"`
 	Content string `json:"content"`
 }
 
-// extractClnkuTranscriptEvents parses the clnku trajectory JSON and returns
+// extractClnkrTranscriptEvents parses the clnkr trajectory JSON and returns
 // generic TranscriptEvents with source-format details already extracted so
-// normalization does not need to re-parse clnku-specific payloads.
-func extractClnkuTranscriptEvents(trajectory string) ([]TranscriptEvent, error) {
-	var messages []clnkuTrajectoryMessage
+// normalization does not need to re-parse clnkr-specific payloads.
+func extractClnkrTranscriptEvents(trajectory string) ([]TranscriptEvent, error) {
+	var messages []clnkrTrajectoryMessage
 	if err := json.Unmarshal([]byte(trajectory), &messages); err != nil {
-		return nil, fmt.Errorf("parse clnku trajectory: %w", err)
+		return nil, fmt.Errorf("parse clnkr trajectory: %w", err)
 	}
 
 	events := make([]TranscriptEvent, 0, len(messages))
@@ -213,7 +213,7 @@ func extractClnkuTranscriptEvents(trajectory string) ([]TranscriptEvent, error) 
 	return events, nil
 }
 
-// clnku event-log and trajectory parsing types — used only by the clnku adapter.
+// clnkr event-log and trajectory parsing types — used only by the clnkr adapter.
 
 type eventEnvelope struct {
 	Type    string          `json:"type"`

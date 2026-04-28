@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/clnkr-ai/clankerval/actions/workflows/ci.yml/badge.svg)](https://github.com/clnkr-ai/clankerval/actions/workflows/ci.yml)
 
-`clankerval` runs checked-in evaluation suites against agent CLIs. Today the runner supports `clnku` and Claude Code.
+`clankerval` runs checked-in evaluation suites against agent CLIs. Today the runner supports `clnkr` and Claude Code.
 
 ## Build
 
@@ -26,7 +26,7 @@ Run this repo's checked-in dummy self-test suite:
 make evaluations
 ```
 
-Run a consuming project's suite against `clnku`:
+Run a consuming project's suite against `clnkr`:
 
 ```bash
 export CLNKR_EVALUATION_MODE=live-provider
@@ -34,7 +34,7 @@ export CLNKR_EVALUATION_API_KEY=your-api-key
 export CLNKR_EVALUATION_BASE_URL=https://api.openai.com/v1
 export CLNKR_EVALUATION_MODEL=gpt-5.4-nano
 
-clankerval run --suite default --binary /path/to/clnku
+clankerval run --suite default --binary /path/to/clnkr
 ```
 
 Run a consuming project's suite against Claude Code:
@@ -70,7 +70,7 @@ evaluations/
 At the suite level, `suite.json` selects:
 - `id`, `description`
 - `mode`: `mock-provider` or `live-provider`
-- optional `agent`: `clnku` or `claude`
+- optional `agent`: `clnkr` or `claude`
 - `trials_per_task`, `failure_policy`, and ordered `tasks`
 
 At the task level, `task.json` selects:
@@ -80,10 +80,10 @@ At the task level, `task.json` selects:
 - `scripted_turns_file` for `mock-provider` tasks
 - grader configuration
 
-Agent precedence is `task.agent > suite.agent > CLI --agent`, with `clnku` as the default when no level sets it.
+Agent precedence is `task.agent > suite.agent > CLI --agent`, with `clnkr` as the default when no level sets it.
 
 Project-local prompt files are agent-specific:
-- `input/project/AGENTS.md` for `clnku` tasks
+- `input/project/AGENTS.md` for `clnkr` tasks
 - `input/project/CLAUDE.md` for Claude tasks
 
 The shared `instruction_file` remains the canonical task prompt in both cases.

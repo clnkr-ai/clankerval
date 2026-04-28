@@ -310,9 +310,9 @@ func TestRunTrial(t *testing.T) {
 			t.Fatalf("GitNumstat missing note.txt change: %q", artifacts.GitNumstat)
 		}
 
-		// clnkuAdapter must populate generic CommandRecord from event log.
+		// clnkrAdapter must populate generic CommandRecord from event log.
 		if len(artifacts.Commands) == 0 {
-			t.Fatal("Commands is empty, want at least one CommandRecord from clnku event log")
+			t.Fatal("Commands is empty, want at least one CommandRecord from clnkr event log")
 		}
 		if !strings.Contains(artifacts.Commands[0].Command, trackedDummyNotePath()) {
 			t.Fatalf("Commands[0].Command = %q, want tracked fixture path", artifacts.Commands[0].Command)
@@ -324,9 +324,9 @@ func TestRunTrial(t *testing.T) {
 			t.Fatal("Commands[0].Dir is empty, want workspace directory from command_start event")
 		}
 
-		// clnkuAdapter must populate generic TranscriptEvents from trajectory.
+		// clnkrAdapter must populate generic TranscriptEvents from trajectory.
 		if len(artifacts.TranscriptEvents) == 0 {
-			t.Fatal("TranscriptEvents is empty, want adapted transcript events from clnku trajectory")
+			t.Fatal("TranscriptEvents is empty, want adapted transcript events from clnkr trajectory")
 		}
 		foundUserInstruction := false
 		foundCommandEvent := false
@@ -345,7 +345,7 @@ func TestRunTrial(t *testing.T) {
 			t.Fatal("TranscriptEvents missing command_result event")
 		}
 
-		// clnkuAdapter must carry native raw artifacts for bundle writing.
+		// clnkrAdapter must carry native raw artifacts for bundle writing.
 		if len(artifacts.RawAgentArtifacts) == 0 {
 			t.Fatal("RawAgentArtifacts is empty, want trajectory and event log as raw artifacts")
 		}
@@ -1487,7 +1487,7 @@ func TestRunTrial(t *testing.T) {
 		}
 	})
 
-	t.Run("reuses configured clnku binary across trials", func(t *testing.T) {
+	t.Run("reuses configured clnkr binary across trials", func(t *testing.T) {
 		ctx := context.Background()
 		roots := newHarnessTestRoots(t)
 		harness := newHarnessForTests(t, ctx, roots.repoRoot, roots.evalsDir)
@@ -1706,7 +1706,7 @@ func TestRunTrial(t *testing.T) {
 		}
 	})
 
-	t.Run("MISE_YES forwarded for clnku agent", func(t *testing.T) {
+	t.Run("MISE_YES forwarded for clnkr agent", func(t *testing.T) {
 		ctx := context.Background()
 		repoRoot := newTempRepoRoot(t)
 		harness := newHarnessForTests(t, ctx, repoRoot)
@@ -1721,11 +1721,11 @@ func TestRunTrial(t *testing.T) {
 		}
 		harness.adapter = fake
 
-		suite, task := writeTempSuiteTask(t, repoRoot, "mise-yes-clnku", map[string]string{
+		suite, task := writeTempSuiteTask(t, repoRoot, "mise-yes-clnkr", map[string]string{
 			"input/instruction.txt":  "do nothing\n",
 			"input/model-turns.json": `["{\"type\":\"done\",\"summary\":\"ok\"}"]`,
 			"task.json": `{
-  "id": "mise-yes-clnku",
+  "id": "mise-yes-clnkr",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
   "working_directory": ".",
@@ -1790,7 +1790,7 @@ func TestRunTrial(t *testing.T) {
 		}
 	})
 
-	t.Run("claude-only env vars not forwarded to clnku agent", func(t *testing.T) {
+	t.Run("claude-only env vars not forwarded to clnkr agent", func(t *testing.T) {
 		ctx := context.Background()
 		repoRoot := newTempRepoRoot(t)
 		harness := newHarnessForTests(t, ctx, repoRoot)
@@ -1806,11 +1806,11 @@ func TestRunTrial(t *testing.T) {
 		}
 		harness.adapter = fake
 
-		suite, task := writeTempSuiteTask(t, repoRoot, "clnku-no-claude-env", map[string]string{
+		suite, task := writeTempSuiteTask(t, repoRoot, "clnkr-no-claude-env", map[string]string{
 			"input/instruction.txt":  "do nothing\n",
 			"input/model-turns.json": `["{\"type\":\"done\",\"summary\":\"ok\"}"]`,
 			"task.json": `{
-  "id": "clnku-no-claude-env",
+  "id": "clnkr-no-claude-env",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
   "working_directory": ".",
@@ -1827,14 +1827,14 @@ func TestRunTrial(t *testing.T) {
 			t.Fatal("adapter was not called")
 		}
 		if envContains(fake.req.Env, "ANTHROPIC_BASE_URL", "https://proxy.example.com") {
-			t.Fatalf("clnku adapter env should not contain ANTHROPIC_BASE_URL; env=%v", fake.req.Env)
+			t.Fatalf("clnkr adapter env should not contain ANTHROPIC_BASE_URL; env=%v", fake.req.Env)
 		}
 		if envContains(fake.req.Env, "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "1") {
-			t.Fatalf("clnku adapter env should not contain CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS; env=%v", fake.req.Env)
+			t.Fatalf("clnkr adapter env should not contain CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS; env=%v", fake.req.Env)
 		}
 	})
 
-	t.Run("claude trials do not require clnku binary setup", func(t *testing.T) {
+	t.Run("claude trials do not require clnkr binary setup", func(t *testing.T) {
 		ctx := context.Background()
 		roots := newHarnessTestRoots(t)
 		harness, err := NewHarness(ctx, roots.repoRoot, WithEvalsDir(roots.evalsDir))
@@ -1856,11 +1856,11 @@ func TestRunTrial(t *testing.T) {
 		}
 		harness.claudeAdapter = fakeClaude
 
-		suite, task := writeTempSuiteTask(t, roots, "claude-no-clnku", map[string]string{
+		suite, task := writeTempSuiteTask(t, roots, "claude-no-clnkr", map[string]string{
 			"input/instruction.txt":  "Say hello\n",
 			"input/model-turns.json": `["{\"type\":\"done\",\"summary\":\"hello\"}"]`,
 			"task.json": `{
-  "id": "claude-no-clnku",
+  "id": "claude-no-clnkr",
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
   "working_directory": ".",
@@ -2152,7 +2152,7 @@ func TestAdapterBoundaryTypes(t *testing.T) {
 			ConfigDir:    "/tmp/config",
 			StateDir:     "/tmp/state",
 			TrialRoot:    "/tmp/trial",
-			BinaryPath:   "/usr/local/bin/clnku",
+			BinaryPath:   "/usr/local/bin/clnkr",
 			Env:          []string{"HOME=/tmp/home", "PATH=/usr/bin"},
 		}
 		if req.TaskRoot != "/tmp/task-root" {
@@ -2170,7 +2170,7 @@ func TestAdapterBoundaryTypes(t *testing.T) {
 		result := AdapterResult{
 			ExitCode:     0,
 			AgentVersion: "1.0.0",
-			AgentCommand: []string{"clnku", "-p", "do something"},
+			AgentCommand: []string{"clnkr", "-p", "do something"},
 			SystemPrompt: "system prompt text",
 			Trajectory:   `[{"role":"user","content":"hello"}]`,
 			EventLog:     `{"type":"command_start","payload":{}}`,
@@ -2319,14 +2319,14 @@ func TestRunTrialPopulatesAgentField(t *testing.T) {
 	harness := newHarnessForTests(t, ctx, roots.repoRoot, roots.evalsDir)
 
 	suite, task := loadDefaultBasicEdit(t, roots)
-	cfg := RunConfig{Mode: ModeMockProvider, Agent: AgentClnku}
+	cfg := RunConfig{Mode: ModeMockProvider, Agent: AgentClnkr}
 	artifacts, err := harness.RunTrial(ctx, suite, task, cfg)
 	if err != nil {
 		t.Fatalf("RunTrial(): %v", err)
 	}
 
-	if artifacts.Agent != AgentClnku {
-		t.Fatalf("Agent = %q, want %q", artifacts.Agent, AgentClnku)
+	if artifacts.Agent != AgentClnkr {
+		t.Fatalf("Agent = %q, want %q", artifacts.Agent, AgentClnkr)
 	}
 }
 

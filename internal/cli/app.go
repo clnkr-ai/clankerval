@@ -80,8 +80,8 @@ Flags:
 		flags.PrintDefaults()
 	}
 	suiteID := flags.String("suite", "default", "suite id to run")
-	agentFlag := flags.String("agent", "clnku", "agent under test: clnku or claude")
-	binaryPath := flags.String("binary", "", "path to agent binary under test (default: build ./cmd/clnku when present, otherwise resolve clnku from PATH)")
+	agentFlag := flags.String("agent", "clnkr", "agent under test: clnkr or claude")
+	binaryPath := flags.String("binary", "", "path to agent binary under test (default: build ./cmd/clnkr when present, otherwise resolve clnkr from PATH)")
 	evalsDir := flags.String("evals-dir", "", "evaluations directory (default: <cwd>/evaluations)")
 	outputDir := flags.String("output-dir", "", "output directory for trials and reports (default: evals dir)")
 	if err := flags.Parse(args); err != nil {
@@ -98,9 +98,9 @@ Flags:
 
 	agent := evaluations.Agent(*agentFlag)
 	switch agent {
-	case evaluations.AgentClnku, evaluations.AgentClaude:
+	case evaluations.AgentClnkr, evaluations.AgentClaude:
 	default:
-		_, _ = fmt.Fprintf(stderr, "Error: --agent must be %q or %q, got %q\n", evaluations.AgentClnku, evaluations.AgentClaude, agent)
+		_, _ = fmt.Fprintf(stderr, "Error: --agent must be %q or %q, got %q\n", evaluations.AgentClnkr, evaluations.AgentClaude, agent)
 		return 1
 	}
 

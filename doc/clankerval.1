@@ -13,7 +13,7 @@ clankerval \- evaluation runner for checked-in agent suites
 \fBclankerval\fP loads checked-in evaluation suites, runs trial workspaces against an agent CLI, grades the result, and writes per-trial bundles plus run-level reports.
 
 .PP
-Today the runner supports two agent adapters: \fBclnku\fP and Claude Code.
+Today the runner supports two agent adapters: \fBclnkr\fP and Claude Code.
 
 .PP
 The two top-level commands are \fBrun\fP and \fBinit\fP\&.
@@ -36,11 +36,11 @@ Suite identifier to run. Defaults to \fBdefault\fP\&.
 
 .TP
 \fB--agent\fP \fIid\fP
-Default agent under test. Must be \fBclnku\fP or \fBclaude\fP\&. This is only the lowest-precedence selector. Effective agent resolution is \fBtask.agent\fP, then \fBsuite.agent\fP, then \fB--agent\fP\&. When no level sets an agent, the default is \fBclnku\fP\&.
+Default agent under test. Must be \fBclnkr\fP or \fBclaude\fP\&. This is only the lowest-precedence selector. Effective agent resolution is \fBtask.agent\fP, then \fBsuite.agent\fP, then \fB--agent\fP\&. When no level sets an agent, the default is \fBclnkr\fP\&.
 
 .TP
 \fB--binary\fP \fIpath\fP
-Path to the \fBclnku\fP binary under test. When omitted, \fBclankerval\fP builds \fB\&./cmd/clnku\fP from the current source tree when present; otherwise it resolves \fBclnku\fP from \fBPATH\fP\&. Claude runs ignore this flag and resolve \fBclaude\fP from \fBPATH\fP instead.
+Path to the \fBclnkr\fP binary under test. When omitted, \fBclankerval\fP builds \fB\&./cmd/clnkr\fP from the current source tree when present; otherwise it resolves \fBclnkr\fP from \fBPATH\fP\&. Claude runs ignore this flag and resolve \fBclaude\fP from \fBPATH\fP instead.
 
 .TP
 \fB--evals-dir\fP \fIpath\fP
@@ -80,7 +80,7 @@ Required only for \fBmock-provider\fP tasks.
 
 .TP
 \fBinput/project/AGENTS.md\fP
-Project-local prompt file staged into the workspace for \fBclnku\fP tasks.
+Project-local prompt file staged into the workspace for \fBclnkr\fP tasks.
 
 .TP
 \fBinput/project/CLAUDE.md\fP
@@ -117,7 +117,7 @@ Canonical bundle metadata, including suite, task, trial, mode, resolved agent, p
 
 .TP
 \fBraw/agent/\fP
-Native agent artifacts, for example \fBtrajectory.json\fP and \fBevents.jsonl\fP for \fBclnku\fP, or \fBtranscript.jsonl\fP and \fBresult.json\fP for Claude.
+Native agent artifacts, for example \fBtrajectory.json\fP and \fBevents.jsonl\fP for \fBclnkr\fP, or \fBtranscript.jsonl\fP and \fBresult.json\fP for Claude.
 
 .TP
 \fBraw/commands.jsonl\fP
@@ -151,7 +151,7 @@ clankerval init
 .EE
 
 .PP
-Run a consuming project's suite against \fBclnku\fP:
+Run a consuming project's suite against \fBclnkr\fP:
 
 .EX
 export CLNKR_EVALUATION_MODE=live-provider
@@ -159,7 +159,7 @@ export CLNKR_EVALUATION_API_KEY=your-api-key
 export CLNKR_EVALUATION_BASE_URL=https://api.openai.com/v1
 export CLNKR_EVALUATION_MODEL=gpt-5.4-nano
 
-clankerval run --suite default --binary /path/to/clnku
+clankerval run --suite default --binary /path/to/clnkr
 .EE
 
 .PP

@@ -92,7 +92,7 @@ func TestLoadTaskAgent(t *testing.T) {
   "instruction_file": "input/instruction.txt",
   "scripted_turns_file": "input/model-turns.json",
   "working_directory": ".",
-  "agent": "clnku",
+  "agent": "clnkr",
   "full_send": true,
   "step_limit": 10,
   "graders": {
@@ -111,8 +111,8 @@ func TestLoadTaskAgent(t *testing.T) {
 		if err != nil {
 			t.Fatalf("LoadTask(): %v", err)
 		}
-		if got.Agent != AgentClnku {
-			t.Fatalf("task agent = %q, want %q", got.Agent, AgentClnku)
+		if got.Agent != AgentClnkr {
+			t.Fatalf("task agent = %q, want %q", got.Agent, AgentClnkr)
 		}
 	})
 
@@ -188,11 +188,11 @@ func TestEffectiveAgent(t *testing.T) {
 		runDefault Agent
 		want       Agent
 	}{
-		{"task wins over suite and default", AgentClaude, AgentClnku, AgentClnku, AgentClaude},
-		{"suite wins over default", "", AgentClaude, AgentClnku, AgentClaude},
-		{"default used when task and suite empty", "", "", AgentClnku, AgentClnku},
-		{"task wins over default when suite empty", AgentClaude, "", AgentClnku, AgentClaude},
-		{"all empty defaults to clnku", "", "", "", AgentClnku},
+		{"task wins over suite and default", AgentClaude, AgentClnkr, AgentClnkr, AgentClaude},
+		{"suite wins over default", "", AgentClaude, AgentClnkr, AgentClaude},
+		{"default used when task and suite empty", "", "", AgentClnkr, AgentClnkr},
+		{"task wins over default when suite empty", AgentClaude, "", AgentClnkr, AgentClaude},
+		{"all empty defaults to clnkr", "", "", "", AgentClnkr},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -250,7 +250,7 @@ func TestLoadSuite(t *testing.T) {
 		path := filepath.Join(dir, "suite.json")
 		writeTestFile(t, path, `{
   "id": "default",
-  "description": "Baseline evaluation suite for clnku",
+  "description": "Baseline evaluation suite for clnkr",
   "mode": "mock-provider",
   "trials_per_task": 1,
   "failure_policy": {
@@ -267,8 +267,8 @@ func TestLoadSuite(t *testing.T) {
 		if got.ID != "default" {
 			t.Fatalf("suite id = %q, want %q", got.ID, "default")
 		}
-		if got.Description != "Baseline evaluation suite for clnku" {
-			t.Fatalf("suite description = %q, want %q", got.Description, "Baseline evaluation suite for clnku")
+		if got.Description != "Baseline evaluation suite for clnkr" {
+			t.Fatalf("suite description = %q, want %q", got.Description, "Baseline evaluation suite for clnkr")
 		}
 		if got.Mode != ModeMockProvider {
 			t.Fatalf("suite mode = %q, want %q", got.Mode, ModeMockProvider)

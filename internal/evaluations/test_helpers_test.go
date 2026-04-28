@@ -11,7 +11,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/clnkr-ai/clankerval/internal/testsupport/clnkusim"
+	"github.com/clnkr-ai/clankerval/internal/testsupport/clnkrsim"
 )
 
 func moduleRoot(t *testing.T) string {
@@ -133,25 +133,25 @@ func requireCleanRealRepoForTest(t *testing.T, repoRoot string) {
 	}
 }
 
-func mustClnkuPath(t *testing.T) string {
+func mustClnkrPath(t *testing.T) string {
 	t.Helper()
 
-	stageEvalClnkuOnce.Do(func() {
-		tempDir, err := os.MkdirTemp("", "clankerval-eval-clnku-*")
+	stageEvalClnkrOnce.Do(func() {
+		tempDir, err := os.MkdirTemp("", "clankerval-eval-clnkr-*")
 		if err != nil {
-			stageEvalClnkuErr = fmt.Errorf("create temp dir for staged clnku: %w", err)
+			stageEvalClnkrErr = fmt.Errorf("create temp dir for staged clnkr: %w", err)
 			return
 		}
-		stageEvalClnkuPath = filepath.Join(tempDir, "clnku")
+		stageEvalClnkrPath = filepath.Join(tempDir, "clnkr")
 
-		if err := clnkusim.BuildBinary(stageEvalClnkuPath); err != nil {
-			stageEvalClnkuErr = fmt.Errorf("build staged clnku: %w", err)
+		if err := clnkrsim.BuildBinary(stageEvalClnkrPath); err != nil {
+			stageEvalClnkrErr = fmt.Errorf("build staged clnkr: %w", err)
 		}
 	})
-	if stageEvalClnkuErr != nil {
-		t.Fatal(stageEvalClnkuErr)
+	if stageEvalClnkrErr != nil {
+		t.Fatal(stageEvalClnkrErr)
 	}
-	return stageEvalClnkuPath
+	return stageEvalClnkrPath
 }
 
 func newHarnessForTests(t *testing.T, ctx context.Context, repoRoot string, evalsDir ...string) *Harness {
@@ -164,7 +164,7 @@ func newHarnessForTests(t *testing.T, ctx context.Context, repoRoot string, eval
 	harness, err := NewHarness(
 		ctx,
 		repoRoot,
-		WithBinary(mustClnkuPath(t)),
+		WithBinary(mustClnkrPath(t)),
 		WithEvalsDir(resolvedEvalsDir),
 	)
 	if err != nil {
@@ -179,9 +179,9 @@ func newHarnessForTests(t *testing.T, ctx context.Context, repoRoot string, eval
 }
 
 var (
-	stageEvalClnkuOnce sync.Once
-	stageEvalClnkuPath string
-	stageEvalClnkuErr  error
+	stageEvalClnkrOnce sync.Once
+	stageEvalClnkrPath string
+	stageEvalClnkrErr  error
 
 	stageEvalFixtureOnce sync.Once
 	stageEvalFixturePath string

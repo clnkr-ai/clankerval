@@ -488,10 +488,10 @@ func optionalAgent(path, field string, value *string) (Agent, error) {
 	}
 	agent := Agent(str)
 	switch agent {
-	case AgentClnku, AgentClaude:
+	case AgentClnkr, AgentClaude:
 		return agent, nil
 	default:
-		return "", fmt.Errorf("%s: field %q must be %q or %q, got %q", path, field, AgentClnku, AgentClaude, agent)
+		return "", fmt.Errorf("%s: field %q must be %q or %q, got %q", path, field, AgentClnkr, AgentClaude, agent)
 	}
 }
 

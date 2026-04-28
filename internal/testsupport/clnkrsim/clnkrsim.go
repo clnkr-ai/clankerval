@@ -1,4 +1,4 @@
-package clnkusim
+package clnkrsim
 
 import (
 	"fmt"
@@ -8,23 +8,23 @@ import (
 	"strings"
 )
 
-// WriteSourceTree materializes a self-contained clnku test binary source tree.
+// WriteSourceTree materializes a self-contained clnkr test binary source tree.
 func WriteSourceTree(root string) error {
-	if err := os.MkdirAll(filepath.Join(root, "cmd", "clnku"), 0o755); err != nil {
-		return fmt.Errorf("mkdir cmd/clnku: %w", err)
+	if err := os.MkdirAll(filepath.Join(root, "cmd", "clnkr"), 0o755); err != nil {
+		return fmt.Errorf("mkdir cmd/clnkr: %w", err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte(goModFile), 0o644); err != nil {
 		return fmt.Errorf("write go.mod: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "cmd", "clnku", "main.go"), []byte(strings.ReplaceAll(mainFile, "§", "`")), 0o644); err != nil {
-		return fmt.Errorf("write cmd/clnku/main.go: %w", err)
+	if err := os.WriteFile(filepath.Join(root, "cmd", "clnkr", "main.go"), []byte(strings.ReplaceAll(mainFile, "§", "`")), 0o644); err != nil {
+		return fmt.Errorf("write cmd/clnkr/main.go: %w", err)
 	}
 	return nil
 }
 
-// BuildBinary builds the self-contained clnku test binary at outputPath.
+// BuildBinary builds the self-contained clnkr test binary at outputPath.
 func BuildBinary(outputPath string) error {
-	buildRoot, err := os.MkdirTemp("", "clankerval-clnkusim-src-*")
+	buildRoot, err := os.MkdirTemp("", "clankerval-clnkrsim-src-*")
 	if err != nil {
 		return fmt.Errorf("create build root: %w", err)
 	}
@@ -39,16 +39,16 @@ func BuildBinary(outputPath string) error {
 		return fmt.Errorf("mkdir output dir: %w", err)
 	}
 
-	cmd := exec.Command("go", "build", "-o", outputPath, "./cmd/clnku")
+	cmd := exec.Command("go", "build", "-o", outputPath, "./cmd/clnkr")
 	cmd.Dir = buildRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("build clnku test binary: %w: %s", err, strings.TrimSpace(string(output)))
+		return fmt.Errorf("build clnkr test binary: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
 
-const goModFile = `module example.com/clnkusim
+const goModFile = `module example.com/clnkrsim
 
 go 1.22
 `
@@ -216,7 +216,7 @@ func fail(err error) {
 }
 
 func buildSystemPrompt(cwd string) string {
-	parts := []string{"clnku test stub"}
+	parts := []string{"clnkr test stub"}
 	for _, path := range []string{
 		filepath.Join(os.Getenv("HOME"), "AGENTS.md"),
 		filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "clnkr", "AGENTS.md"),

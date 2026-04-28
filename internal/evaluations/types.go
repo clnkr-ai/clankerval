@@ -14,8 +14,8 @@ const (
 type Agent string
 
 const (
-	// AgentClnku runs the clnku agent.
-	AgentClnku Agent = "clnku"
+	// AgentClnkr runs the clnkr agent.
+	AgentClnkr Agent = "clnkr"
 	// AgentClaude runs the Claude Code agent.
 	AgentClaude Agent = "claude"
 )
