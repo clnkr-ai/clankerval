@@ -14,8 +14,6 @@ Rules-Requires-Root: no
 Package: clankerval
 Architecture: any
 Depends: ${misc:Depends}, git
-Breaks: clnkr (<< 1.5.0)
-Replaces: clnkr (<< 1.5.0)
 Description: evaluation runner for clnkr-compatible agents
  clankerval is the standalone evaluation runner extracted from clnkr.
  It runs project-owned evaluation suites and ships the clankerval
