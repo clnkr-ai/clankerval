@@ -13,12 +13,12 @@ import (
 	"testing"
 
 	"github.com/clnkr-ai/clankerval/internal/evaluations"
-	"github.com/clnkr-ai/clankerval/internal/testsupport/clnkusim"
+	"github.com/clnkr-ai/clankerval/internal/testsupport/clnkrsim"
 )
 
 func TestRun(t *testing.T) {
 	lockRealRepoForTest(t)
-	stagedClnku := mustStageClnku(t)
+	stagedClnkr := mustStageClnkr(t)
 
 	t.Run("run suite prints summary", func(t *testing.T) {
 		repoRoot := moduleRoot(t)
@@ -33,7 +33,7 @@ func TestRun(t *testing.T) {
 
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
-		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID, "--binary", stagedClnku, "--evals-dir", evalsDir}, repoRoot, stdout, stderr, func(string) string { return "" })
+		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID, "--binary", stagedClnkr, "--evals-dir", evalsDir}, repoRoot, stdout, stderr, func(string) string { return "" })
 		if exitCode != 0 {
 			t.Fatalf("exit code = %d, want 0; stderr=%q", exitCode, stderr.String())
 		}
@@ -57,7 +57,7 @@ func TestRun(t *testing.T) {
 		})
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
-		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID, "--binary", stagedClnku, "--evals-dir", evalsDir}, repoRoot, stdout, stderr, func(string) string { return "" })
+		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID, "--binary", stagedClnkr, "--evals-dir", evalsDir}, repoRoot, stdout, stderr, func(string) string { return "" })
 		if exitCode == 0 {
 			t.Fatalf("exit code = 0, want non-zero")
 		}
@@ -69,9 +69,9 @@ func TestRun(t *testing.T) {
 		}
 	})
 
-	t.Run("run without --binary still builds ./cmd/clnku when source tree exists", func(t *testing.T) {
+	t.Run("run without --binary still builds ./cmd/clnkr when source tree exists", func(t *testing.T) {
 		sourceRepoRoot := t.TempDir()
-		if err := clnkusim.WriteSourceTree(sourceRepoRoot); err != nil {
+		if err := clnkrsim.WriteSourceTree(sourceRepoRoot); err != nil {
 			t.Fatalf("WriteSourceTree(): %v", err)
 		}
 		mustWrite(t, filepath.Join(sourceRepoRoot, trackedDummyNotePath()), "seed note\n")
@@ -113,7 +113,7 @@ func TestRun(t *testing.T) {
 		if exitCode != 0 {
 			t.Fatalf("exit code = %d, want 0; stderr=%q", exitCode, stderr.String())
 		}
-		if !strings.Contains(stderr.String(), "clankerval: building clnku from source...") {
+		if !strings.Contains(stderr.String(), "clankerval: building clnkr from source...") {
 			t.Fatalf("stderr = %q, want source-build progress", stderr.String())
 		}
 		if !strings.Contains(stderr.String(), "clankerval: harness ready") {
@@ -124,7 +124,7 @@ func TestRun(t *testing.T) {
 		}
 	})
 
-	t.Run("run without --binary falls back to clnku on PATH when ./cmd/clnku does not exist", func(t *testing.T) {
+	t.Run("run without --binary falls back to clnkr on PATH when ./cmd/clnkr does not exist", func(t *testing.T) {
 		repoRoot := moduleRoot(t)
 		requireCleanRealRepoForTest(t, repoRoot)
 		evalsDir := newTempEvalsDir(t)
@@ -136,7 +136,7 @@ func TestRun(t *testing.T) {
 		})
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
-		pathEnv := filepath.Dir(stagedClnku) + string(os.PathListSeparator) + os.Getenv("PATH")
+		pathEnv := filepath.Dir(stagedClnkr) + string(os.PathListSeparator) + os.Getenv("PATH")
 		t.Setenv("PATH", pathEnv)
 		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID, "--evals-dir", evalsDir}, repoRoot, stdout, stderr, func(key string) string {
 			if key == "PATH" {
@@ -150,7 +150,7 @@ func TestRun(t *testing.T) {
 		if !strings.Contains(stdout.String(), "suite="+suiteID) {
 			t.Fatalf("stdout = %q, want suite summary", stdout.String())
 		}
-		if strings.Contains(stderr.String(), "building clnku from source...") {
+		if strings.Contains(stderr.String(), "building clnkr from source...") {
 			t.Fatalf("stderr = %q, want PATH fallback without source build", stderr.String())
 		}
 		if !strings.Contains(stderr.String(), "clankerval: harness ready") {
@@ -158,7 +158,7 @@ func TestRun(t *testing.T) {
 		}
 	})
 
-	t.Run("claude agent does not preflight clnku before suite loading", func(t *testing.T) {
+	t.Run("claude agent does not preflight clnkr before suite loading", func(t *testing.T) {
 		repoRoot := moduleRoot(t)
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
@@ -171,8 +171,8 @@ func TestRun(t *testing.T) {
 		if exitCode == 0 {
 			t.Fatal("exit code = 0, want non-zero for missing suite")
 		}
-		if strings.Contains(stderr.String(), "resolve clnku binary") {
-			t.Fatalf("stderr = %q, want suite load failure before any clnku preflight", stderr.String())
+		if strings.Contains(stderr.String(), "resolve clnkr binary") {
+			t.Fatalf("stderr = %q, want suite load failure before any clnkr preflight", stderr.String())
 		}
 		if !strings.Contains(stderr.String(), "run suite load suite") {
 			t.Fatalf("stderr = %q, want suite load failure", stderr.String())
@@ -204,7 +204,7 @@ func TestRun(t *testing.T) {
 		exitCode := Run(
 			"clankerval",
 			"dev",
-			[]string{"run", "--suite", suiteID, "--binary", stagedClnku, "--evals-dir", relEvalsDir, "--output-dir", relOutputDir},
+			[]string{"run", "--suite", suiteID, "--binary", stagedClnkr, "--evals-dir", relEvalsDir, "--output-dir", relOutputDir},
 			repoRoot,
 			stdout,
 			stderr,
@@ -234,7 +234,7 @@ func TestRun(t *testing.T) {
 				"run",
 				"--suite", "dummy",
 				"--evals-dir", filepath.Join(moduleRoot, "testdata", "evaluations"),
-				"--binary", stagedClnku,
+				"--binary", stagedClnkr,
 				"--output-dir", outputDir,
 			},
 			moduleRoot,
@@ -250,7 +250,7 @@ func TestRun(t *testing.T) {
 		}
 		for _, want := range []string{
 			"clankerval: harness ready",
-			`clankerval: task 1/1 "001-basic" [clnku] trial 1/1 ...`,
+			`clankerval: task 1/1 "001-basic" [clnkr] trial 1/1 ...`,
 		} {
 			if !strings.Contains(stderr.String(), want) {
 				t.Fatalf("stderr = %q, want substring %q", stderr.String(), want)
@@ -260,8 +260,8 @@ func TestRun(t *testing.T) {
 		for _, rel := range []string{
 			filepath.Join(outputDir, "reports", "junit.xml"),
 			filepath.Join(outputDir, "reports", "open-test-report.xml"),
-			filepath.Join(outputDir, "trials", "trial-dummy-clnku-000-00-001-basic", "bundle.json"),
-			filepath.Join(outputDir, "trials", "trial-dummy-clnku-000-00-001-basic", "outcome", "diff.patch"),
+			filepath.Join(outputDir, "trials", "trial-dummy-clnkr-000-00-001-basic", "bundle.json"),
+			filepath.Join(outputDir, "trials", "trial-dummy-clnkr-000-00-001-basic", "outcome", "diff.patch"),
 		} {
 			if _, err := os.Stat(rel); err != nil {
 				t.Fatalf("Stat(%q): %v", rel, err)
@@ -282,7 +282,7 @@ func TestRun(t *testing.T) {
 
 		stdout := &bytes.Buffer{}
 		stderr := &bytes.Buffer{}
-		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID, "--binary", stagedClnku, "--agent", "clnku", "--evals-dir", evalsDir}, repoRoot, stdout, stderr, func(string) string { return "" })
+		exitCode := Run("clankerval", "dev", []string{"run", "--suite", suiteID, "--binary", stagedClnkr, "--agent", "clnkr", "--evals-dir", evalsDir}, repoRoot, stdout, stderr, func(string) string { return "" })
 		if exitCode != 0 {
 			t.Fatalf("exit code = %d, want 0; stderr=%q", exitCode, stderr.String())
 		}
@@ -453,30 +453,30 @@ func TestSubcommandHelpStreamsToStderr(t *testing.T) {
 }
 
 var (
-	stageClnkuOnce sync.Once
-	stageClnkuPath string
-	stageClnkuErr  error
+	stageClnkrOnce sync.Once
+	stageClnkrPath string
+	stageClnkrErr  error
 )
 
-func mustStageClnku(t *testing.T) string {
+func mustStageClnkr(t *testing.T) string {
 	t.Helper()
 
-	stageClnkuOnce.Do(func() {
-		tempDir, err := os.MkdirTemp("", "clankerval-clnku-*")
+	stageClnkrOnce.Do(func() {
+		tempDir, err := os.MkdirTemp("", "clankerval-clnkr-*")
 		if err != nil {
-			stageClnkuErr = fmt.Errorf("create temp dir for staged clnku: %w", err)
+			stageClnkrErr = fmt.Errorf("create temp dir for staged clnkr: %w", err)
 			return
 		}
-		stageClnkuPath = filepath.Join(tempDir, "clnku")
+		stageClnkrPath = filepath.Join(tempDir, "clnkr")
 
-		if err := clnkusim.BuildBinary(stageClnkuPath); err != nil {
-			stageClnkuErr = fmt.Errorf("build staged clnku: %w", err)
+		if err := clnkrsim.BuildBinary(stageClnkrPath); err != nil {
+			stageClnkrErr = fmt.Errorf("build staged clnkr: %w", err)
 		}
 	})
-	if stageClnkuErr != nil {
-		t.Fatal(stageClnkuErr)
+	if stageClnkrErr != nil {
+		t.Fatal(stageClnkrErr)
 	}
-	return stageClnkuPath
+	return stageClnkrPath
 }
 
 func moduleRoot(t *testing.T) string {

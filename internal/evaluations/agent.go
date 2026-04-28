@@ -34,7 +34,7 @@ type AdapterResult struct {
 	AgentCommand []string
 	SystemPrompt string
 
-	// Trajectory and EventLog preserve clnku-native raw outputs for backward
+	// Trajectory and EventLog preserve clnkr-native raw outputs for backward
 	// compatibility. Future adapters populate only the generic fields below.
 	Trajectory string
 	EventLog   string

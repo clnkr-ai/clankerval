@@ -798,7 +798,7 @@ func TestClaudeAdapterRouting(t *testing.T) {
 		}
 	})
 
-	t.Run("AgentClnku_does_not_route_to_claude_adapter", func(t *testing.T) {
+	t.Run("AgentClnkr_does_not_route_to_claude_adapter", func(t *testing.T) {
 		ctx := context.Background()
 		repoRoot := newTempRepoRoot(t)
 		harness := newHarnessForTests(t, ctx, repoRoot)
@@ -813,7 +813,7 @@ func TestClaudeAdapterRouting(t *testing.T) {
 		}
 
 		if fake.called {
-			t.Fatal("claude adapter was called for a clnku task — routing is wrong")
+			t.Fatal("claude adapter was called for a clnkr task — routing is wrong")
 		}
 	})
 }

@@ -33,12 +33,12 @@ internal/transcript/     # transcript helpers for state and command envelopes
 internal/testfixture/    # fixture agent for repo-local eval tests
 ```
 
-`internal/evaluations` is the center of gravity: `load.go` validates suite/task JSON, `harness.go` stages trial workspaces, `agent_clnku.go`/`agent_claude.go` adapt native outputs into generic events, `normalize.go`/`bundle.go`/`report.go` write canonical outputs.
+`internal/evaluations` is the center of gravity: `load.go` validates suite/task JSON, `harness.go` stages trial workspaces, `agent_clnkr.go`/`agent_claude.go` adapt native outputs into generic events, `normalize.go`/`bundle.go`/`report.go` write canonical outputs.
 
 ## Agent model
-Supported agents: `clnku`, `claude`. Precedence: `task.agent > suite.agent > CLI --agent`. Canonical trial IDs include the resolved agent.
+Supported agents: `clnkr`, `claude`. Precedence: `task.agent > suite.agent > CLI --agent`. Canonical trial IDs include the resolved agent.
 
-Project-local prompt files are agent-specific: `input/project/AGENTS.md` for `clnku`, `input/project/CLAUDE.md` for Claude. The task-level `instruction_file` is the shared canonical prompt for both.
+Project-local prompt files are agent-specific: `input/project/AGENTS.md` for `clnkr`, `input/project/CLAUDE.md` for Claude. The task-level `instruction_file` is the shared canonical prompt for both.
 
 ## Testing
 - `internal/cli/app_test.go` covers the public CLI contract.

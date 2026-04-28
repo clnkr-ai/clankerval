@@ -131,7 +131,7 @@ func TestNormalizeTranscriptFromGenericEvents(t *testing.T) {
 	artifacts := RunArtifacts{
 		// Trajectory and EventLog are intentionally empty — this test
 		// proves normalization works from TranscriptEvents + Commands
-		// without clnku-specific source-format parsing.
+		// without clnkr-specific source-format parsing.
 		Trajectory: "",
 		EventLog:   "",
 		TranscriptEvents: []TranscriptEvent{
@@ -263,8 +263,8 @@ func TestWriteTrialBundle(t *testing.T) {
 	if bundle.SchemaVersion != "3" {
 		t.Fatalf("bundle schema version = %q, want %q", bundle.SchemaVersion, "3")
 	}
-	if bundle.Agent.ID != string(AgentClnku) {
-		t.Fatalf("bundle agent id = %q, want %q", bundle.Agent.ID, AgentClnku)
+	if bundle.Agent.ID != string(AgentClnkr) {
+		t.Fatalf("bundle agent id = %q, want %q", bundle.Agent.ID, AgentClnkr)
 	}
 	if bundle.Agent.Version != "0.1.0-test" {
 		t.Fatalf("bundle agent version = %q, want %q", bundle.Agent.Version, "0.1.0-test")
@@ -467,8 +467,8 @@ func TestLoadBundle(t *testing.T) {
 	if loaded.Artifacts.RawCommands != "raw/commands.jsonl" {
 		t.Fatalf("raw commands = %q, want raw/commands.jsonl", loaded.Artifacts.RawCommands)
 	}
-	if loaded.Agent.ID != string(AgentClnku) {
-		t.Fatalf("loaded agent id = %q, want %q", loaded.Agent.ID, AgentClnku)
+	if loaded.Agent.ID != string(AgentClnkr) {
+		t.Fatalf("loaded agent id = %q, want %q", loaded.Agent.ID, AgentClnkr)
 	}
 
 	normalizedTranscript, err := loaded.ReadNormalizedTranscript()
@@ -823,9 +823,9 @@ func sampleRunArtifacts(t *testing.T) RunArtifacts {
 		SuiteTaskIndex:  0,
 		TrialAttempt:    0,
 		Mode:            ModeMockProvider,
-		Agent:           AgentClnku,
+		Agent:           AgentClnkr,
 		AgentVersion:    "0.1.0-test",
-		AgentCommand:    []string{"clnku", "--eval"},
+		AgentCommand:    []string{"clnkr", "--eval"},
 		ProviderModel:   "test-model",
 		ProviderBaseURL: "http://127.0.0.1:9999",
 		StartedAt:       startedAt,

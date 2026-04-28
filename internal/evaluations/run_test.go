@@ -34,7 +34,7 @@ func TestRunSuite(t *testing.T) {
 			RunConfig{Mode: ModeMockProvider},
 			WithSuiteEvalsDir(evalsDir),
 			WithSuiteOutputDir(outputDir),
-			WithSuiteBinary(mustClnkuPath(t)),
+			WithSuiteBinary(mustClnkrPath(t)),
 		)
 		if err != nil {
 			t.Fatalf("RunSuite(): %v", err)
@@ -53,9 +53,9 @@ func TestRunSuite(t *testing.T) {
 		}
 
 		// Agent identity must propagate through the end-to-end path even when
-		// no agent is set explicitly — EffectiveAgent defaults to clnku.
-		if report.Tasks[0].Trials[0].Agent.ID != string(AgentClnku) {
-			t.Fatalf("trial agent id = %q, want %q", report.Tasks[0].Trials[0].Agent.ID, AgentClnku)
+		// no agent is set explicitly — EffectiveAgent defaults to clnkr.
+		if report.Tasks[0].Trials[0].Agent.ID != string(AgentClnkr) {
+			t.Fatalf("trial agent id = %q, want %q", report.Tasks[0].Trials[0].Agent.ID, AgentClnkr)
 		}
 
 		bundlePath := report.Tasks[0].Trials[0].BundlePath
@@ -103,7 +103,7 @@ func TestRunSuite(t *testing.T) {
 			RunConfig{Mode: ModeMockProvider},
 			WithSuiteEvalsDir(evalsDir),
 			WithSuiteOutputDir(outputDir),
-			WithSuiteBinary(mustClnkuPath(t)),
+			WithSuiteBinary(mustClnkrPath(t)),
 		)
 		if err != nil {
 			t.Fatalf("RunSuite(): %v", err)
@@ -139,7 +139,7 @@ func TestRunSuite(t *testing.T) {
 			RunConfig{Mode: ModeMockProvider},
 			WithSuiteEvalsDir(evalsDir),
 			WithSuiteOutputDir(outputDir),
-			WithSuiteBinary(mustClnkuPath(t)),
+			WithSuiteBinary(mustClnkrPath(t)),
 		)
 		if err != nil {
 			t.Fatalf("RunSuite(): %v", err)
@@ -178,7 +178,7 @@ func TestRunSuite(t *testing.T) {
 			RunConfig{Mode: ModeMockProvider},
 			WithSuiteEvalsDir(evalsDir),
 			WithSuiteOutputDir(outputDir),
-			WithSuiteBinary(mustClnkuPath(t)),
+			WithSuiteBinary(mustClnkrPath(t)),
 		)
 		if err != nil {
 			t.Fatalf("RunSuite(): %v", err)
@@ -214,7 +214,7 @@ func TestRunSuite(t *testing.T) {
 			RunConfig{Mode: ModeMockProvider},
 			WithSuiteEvalsDir(evalsDir),
 			WithSuiteOutputDir(outputDir),
-			WithSuiteBinary(mustClnkuPath(t)),
+			WithSuiteBinary(mustClnkrPath(t)),
 		)
 		if err != nil {
 			t.Fatalf("RunSuite(): %v", err)
@@ -248,7 +248,7 @@ func TestRunSuite(t *testing.T) {
 			RunConfig{Mode: ModeMockProvider},
 			WithSuiteEvalsDir(evalsDir),
 			WithSuiteOutputDir(outputDir),
-			WithSuiteBinary(mustClnkuPath(t)),
+			WithSuiteBinary(mustClnkrPath(t)),
 			WithProgress(func(msg string) {
 				progressMessages = append(progressMessages, msg)
 			}),
@@ -297,7 +297,7 @@ func TestRunSuite(t *testing.T) {
 			RunConfig{Mode: ModeMockProvider},
 			WithSuiteEvalsDir(evalsDir),
 			WithSuiteOutputDir(outputDir),
-			WithSuiteBinary(mustClnkuPath(t)),
+			WithSuiteBinary(mustClnkrPath(t)),
 		); err == nil || !strings.Contains(err.Error(), "load suite") {
 			t.Fatalf("RunSuite() error = %v, want load suite failure", err)
 		}
@@ -327,7 +327,7 @@ func TestRunSuite(t *testing.T) {
 			RunConfig{Mode: ModeMockProvider},
 			WithSuiteEvalsDir(evalsDir),
 			WithSuiteOutputDir(outputDir),
-			WithSuiteBinary(mustClnkuPath(t)),
+			WithSuiteBinary(mustClnkrPath(t)),
 		)
 		if err == nil || !strings.Contains(err.Error(), "write canonical bundle") {
 			t.Fatalf("RunSuite() error = %v, want canonical bundle write failure", err)

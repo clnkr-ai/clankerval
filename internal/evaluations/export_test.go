@@ -17,7 +17,7 @@ func TestBuildRunReport(t *testing.T) {
 				suiteID:        "suite-a",
 				taskID:         "task-b",
 				trialID:        "trial-c",
-				agent:          AgentClnku,
+				agent:          AgentClnkr,
 				suiteTaskIndex: 1,
 				trialAttempt:   1,
 				trialPassed:    true,
@@ -26,7 +26,7 @@ func TestBuildRunReport(t *testing.T) {
 				suiteID:        "suite-a",
 				taskID:         "task-a",
 				trialID:        "trial-z",
-				agent:          AgentClnku,
+				agent:          AgentClnkr,
 				suiteTaskIndex: 0,
 				trialAttempt:   0,
 				trialPassed:    false,
@@ -38,7 +38,7 @@ func TestBuildRunReport(t *testing.T) {
 				suiteID:        "suite-a",
 				taskID:         "task-b",
 				trialID:        "trial-a",
-				agent:          AgentClnku,
+				agent:          AgentClnkr,
 				suiteTaskIndex: 1,
 				trialAttempt:   0,
 				trialPassed:    true,
@@ -47,7 +47,7 @@ func TestBuildRunReport(t *testing.T) {
 				suiteID:        "suite-a",
 				taskID:         "task-b",
 				trialID:        "trial-b",
-				agent:          AgentClnku,
+				agent:          AgentClnkr,
 				suiteTaskIndex: 1,
 				trialAttempt:   0,
 				trialPassed:    true,
@@ -127,7 +127,7 @@ func TestBuildRunReport(t *testing.T) {
 				suiteID:        "suite-a",
 				taskID:         "task-a",
 				trialID:        "trial-1",
-				agent:          AgentClnku,
+				agent:          AgentClnkr,
 				suiteTaskIndex: 0,
 				trialAttempt:   0,
 				trialPassed:    true,
@@ -200,7 +200,7 @@ func TestExportOpenTestReport(t *testing.T) {
 			suiteID:        "suite-a",
 			taskID:         "task-b",
 			trialID:        "trial-c",
-			agent:          AgentClnku,
+			agent:          AgentClnkr,
 			suiteTaskIndex: 1,
 			trialAttempt:   1,
 			trialPassed:    true,
@@ -209,7 +209,7 @@ func TestExportOpenTestReport(t *testing.T) {
 			suiteID:        "suite-a",
 			taskID:         "task-a",
 			trialID:        "trial-z",
-			agent:          AgentClnku,
+			agent:          AgentClnkr,
 			suiteTaskIndex: 0,
 			trialAttempt:   0,
 			trialPassed:    false,
@@ -221,7 +221,7 @@ func TestExportOpenTestReport(t *testing.T) {
 			suiteID:        "suite-a",
 			taskID:         "task-b",
 			trialID:        "trial-a",
-			agent:          AgentClnku,
+			agent:          AgentClnkr,
 			suiteTaskIndex: 1,
 			trialAttempt:   0,
 			trialPassed:    true,
@@ -253,25 +253,25 @@ func TestExportOpenTestReport(t *testing.T) {
 		"time": "2026-03-31T10:00:00Z",
 	})
 	assertOTRStartElement(t, elems[2], openTestReportingEventsNS, "started", map[string]string{
-		"id":       "task:suite-a:clnku:0:task-a",
-		"name":     "task task-a [clnku]",
+		"id":       "task:suite-a:clnkr:0:task-a",
+		"name":     "task task-a [clnkr]",
 		"parentId": "suite:suite-a",
 		"time":     "2026-03-31T10:00:00Z",
 	})
 	assertOTRStartElement(t, elems[3], openTestReportingEventsNS, "started", map[string]string{
-		"id":       "trial:suite-a:clnku:0:0:trial-z",
-		"name":     "trial trial-z [clnku]",
-		"parentId": "task:suite-a:clnku:0:task-a",
+		"id":       "trial:suite-a:clnkr:0:0:trial-z",
+		"name":     "trial trial-z [clnkr]",
+		"parentId": "task:suite-a:clnkr:0:task-a",
 		"time":     "2026-03-31T10:00:00Z",
 	})
 	assertOTRStartElement(t, elems[4], openTestReportingEventsNS, "finished", map[string]string{
-		"id":   "trial:suite-a:clnku:0:0:trial-z",
+		"id":   "trial:suite-a:clnkr:0:0:trial-z",
 		"time": "2026-03-31T10:00:02Z",
 	})
 	assertOTRStartElement(t, elems[5], openTestReportingCoreNS, "result", map[string]string{
 		"status": "FAILED",
 	})
-	assertDeterministicElementOrder(t, elems, "started", "id", []string{"trial:suite-a:clnku:0:0:trial-z", "trial:suite-a:clnku:1:0:trial-a", "trial:suite-a:clnku:1:1:trial-c"})
+	assertDeterministicElementOrder(t, elems, "started", "id", []string{"trial:suite-a:clnkr:0:0:trial-z", "trial:suite-a:clnkr:1:0:trial-a", "trial:suite-a:clnkr:1:1:trial-c"})
 	if !strings.Contains(string(data), "missing diff") || !strings.Contains(string(data), "outcome_diff") {
 		t.Fatalf("report missing failure context: %q", string(data))
 	}
@@ -283,7 +283,7 @@ func TestExportJUnit(t *testing.T) {
 			suiteID:        "suite-a",
 			taskID:         "task-b",
 			trialID:        "trial-c",
-			agent:          AgentClnku,
+			agent:          AgentClnkr,
 			suiteTaskIndex: 1,
 			trialAttempt:   1,
 			trialPassed:    true,
@@ -292,7 +292,7 @@ func TestExportJUnit(t *testing.T) {
 			suiteID:        "suite-a",
 			taskID:         "task-a",
 			trialID:        "trial-z",
-			agent:          AgentClnku,
+			agent:          AgentClnkr,
 			suiteTaskIndex: 0,
 			trialAttempt:   0,
 			trialPassed:    false,
@@ -304,7 +304,7 @@ func TestExportJUnit(t *testing.T) {
 			suiteID:        "suite-a",
 			taskID:         "task-b",
 			trialID:        "trial-a",
-			agent:          AgentClnku,
+			agent:          AgentClnkr,
 			suiteTaskIndex: 1,
 			trialAttempt:   0,
 			trialPassed:    true,
@@ -333,7 +333,7 @@ func TestExportJUnit(t *testing.T) {
 		t.Fatalf("JUnit output missing failure context: %q", content)
 	}
 	// Agent must appear in JUnit classname so the same task under different agents doesn't collide.
-	if !strings.Contains(content, "clnku") {
+	if !strings.Contains(content, "clnkr") {
 		t.Fatalf("JUnit classname missing agent: %q", content)
 	}
 	assertDeterministicElementOrder(t, parseXMLStartElements(t, content), "testcase", "name", []string{"trial-z", "trial-a", "trial-c"})

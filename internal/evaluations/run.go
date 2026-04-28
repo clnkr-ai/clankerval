@@ -50,7 +50,7 @@ func WithSuiteOutputDir(path string) RunSuiteOption {
 	}
 }
 
-// WithSuiteBinary overrides the clnku binary path for the harness.
+// WithSuiteBinary overrides the clnkr binary path for the harness.
 func WithSuiteBinary(path string) RunSuiteOption {
 	return func(o *runSuiteOptions) {
 		o.binaryPath = path
@@ -90,8 +90,8 @@ func RunSuite(ctx context.Context, repoRoot, suiteID string, cfg RunConfig, opts
 		return RunReport{}, fmt.Errorf("run suite reset report output: %w", err)
 	}
 
-	if suiteUsesClnku(tasks, suite, cfg) && o.binaryPath == "" && repoHasClnkuSourceTree(repoRoot) {
-		o.emit("building clnku from source...")
+	if suiteUsesClnkr(tasks, suite, cfg) && o.binaryPath == "" && repoHasClnkrSourceTree(repoRoot) {
+		o.emit("building clnkr from source...")
 	}
 
 	var harnessOpts []HarnessOption
@@ -190,9 +190,9 @@ func canonicalTrialID(suiteID string, agent Agent, suiteTaskIndex, trialAttempt 
 	return fmt.Sprintf("trial-%s-%s-%03d-%02d-%s", suiteID, agent, suiteTaskIndex, trialAttempt, taskID)
 }
 
-func suiteUsesClnku(tasks []Task, suite Suite, cfg RunConfig) bool {
+func suiteUsesClnkr(tasks []Task, suite Suite, cfg RunConfig) bool {
 	for _, task := range tasks {
-		if EffectiveAgent(task.Agent, suite.Agent, cfg.Agent) == AgentClnku {
+		if EffectiveAgent(task.Agent, suite.Agent, cfg.Agent) == AgentClnkr {
 			return true
 		}
 	}

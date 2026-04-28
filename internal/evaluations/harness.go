@@ -18,8 +18,8 @@ import (
 // never fail on argv size.
 const gitAddIntentBatchByteLimit = 64 * 1024
 
-// Harness coordinates evaluation trials and resolves the clnku binary only when
-// a clnku trial actually needs it.
+// Harness coordinates evaluation trials and resolves the clnkr binary only when
+// a clnkr trial actually needs it.
 type Harness struct {
 	tempRoot      string
 	trialsDir     string
@@ -27,7 +27,7 @@ type Harness struct {
 	evalsDir      string
 	buildDir      string
 	binaryPath    string
-	adapter       AgentAdapter // clnku adapter (default)
+	adapter       AgentAdapter // clnkr adapter (default)
 	claudeAdapter AgentAdapter // claude adapter, lazily validated
 }
 
@@ -39,8 +39,8 @@ type harnessOptions struct {
 	evalsDir   string
 }
 
-// WithBinary skips building clnku from source and uses the supplied binary
-// path instead. If path is empty, the harness resolves "clnku" via PATH.
+// WithBinary skips building clnkr from source and uses the supplied binary
+// path instead. If path is empty, the harness resolves "clnkr" via PATH.
 func WithBinary(path string) HarnessOption {
 	return func(o *harnessOptions) {
 		o.binaryPath = path
@@ -103,7 +103,7 @@ type repoRootOverlayState struct {
 }
 
 // NewHarness prepares a reusable harness for evaluation trials.
-// Pass WithBinary to force a specific clnku binary path.
+// Pass WithBinary to force a specific clnkr binary path.
 func NewHarness(ctx context.Context, repoRoot string, opts ...HarnessOption) (*Harness, error) {
 	var o harnessOptions
 	for _, opt := range opts {
@@ -131,7 +131,7 @@ func NewHarness(ctx context.Context, repoRoot string, opts ...HarnessOption) (*H
 		h.binaryPath = o.binaryPath
 	}
 
-	h.adapter = &clnkuAdapter{}
+	h.adapter = &clnkrAdapter{}
 
 	return h, nil
 }
@@ -214,9 +214,9 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 		}
 	}()
 
-	if artifacts.Agent == AgentClnku {
-		if err := h.ensureClnkuBinary(ctx); err != nil {
-			return RunArtifacts{}, fmt.Errorf("ensure clnku binary: %w", err)
+	if artifacts.Agent == AgentClnkr {
+		if err := h.ensureClnkrBinary(ctx); err != nil {
+			return RunArtifacts{}, fmt.Errorf("ensure clnkr binary: %w", err)
 		}
 	}
 
@@ -316,7 +316,7 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 
 // adapterForAgent returns the appropriate adapter for the given agent.
 // Claude tasks use the dedicated claudeAdapter; everything else uses the
-// default clnku adapter, keeping existing clnku tests fully stable.
+// default clnkr adapter, keeping existing clnkr tests fully stable.
 func (h *Harness) adapterForAgent(agent Agent) AgentAdapter {
 	if agent == AgentClaude {
 		if h.claudeAdapter == nil {
@@ -334,12 +334,12 @@ func resolveTaskRoot(repoRoot, evalsDir, suiteID, taskID string) string {
 	return filepath.Join(repoRoot, "evaluations", "suites", suiteID, "tasks", taskID)
 }
 
-func (h *Harness) ensureClnkuBinary(ctx context.Context) error {
+func (h *Harness) ensureClnkrBinary(ctx context.Context) error {
 	if h.binaryPath != "" {
 		return nil
 	}
 
-	if h.repoRoot != "" && repoHasClnkuSourceTree(h.repoRoot) {
+	if h.repoRoot != "" && repoHasClnkrSourceTree(h.repoRoot) {
 		if h.buildDir == "" {
 			buildDir := filepath.Join(h.tempRoot, "build")
 			if err := os.MkdirAll(buildDir, 0o755); err != nil {
@@ -347,7 +347,7 @@ func (h *Harness) ensureClnkuBinary(ctx context.Context) error {
 			}
 			h.buildDir = buildDir
 		}
-		h.binaryPath = filepath.Join(h.buildDir, "clnku")
+		h.binaryPath = filepath.Join(h.buildDir, "clnkr")
 		if err := h.buildBinary(ctx); err != nil {
 			h.binaryPath = ""
 			return err
@@ -355,20 +355,20 @@ func (h *Harness) ensureClnkuBinary(ctx context.Context) error {
 		return nil
 	}
 
-	resolved, err := exec.LookPath("clnku")
+	resolved, err := exec.LookPath("clnkr")
 	if err != nil {
-		return fmt.Errorf("resolve clnku binary: %w", err)
+		return fmt.Errorf("resolve clnkr binary: %w", err)
 	}
 	h.binaryPath = resolved
 	return nil
 }
 
 func (h *Harness) buildBinary(ctx context.Context) error {
-	cmd := exec.CommandContext(ctx, "go", "build", "-o", h.binaryPath, "./cmd/clnku")
+	cmd := exec.CommandContext(ctx, "go", "build", "-o", h.binaryPath, "./cmd/clnkr")
 	cmd.Dir = h.repoRoot
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("build clnku: %w: %s", err, strings.TrimSpace(string(output)))
+		return fmt.Errorf("build clnkr: %w: %s", err, strings.TrimSpace(string(output)))
 	}
 	return nil
 }
@@ -656,11 +656,11 @@ func appendEnvFromHostIfSet(env []string, key string) []string {
 	return append(env, key+"="+value)
 }
 
-func repoHasClnkuSourceTree(repoRoot string) bool {
+func repoHasClnkrSourceTree(repoRoot string) bool {
 	if strings.TrimSpace(repoRoot) == "" {
 		return false
 	}
-	info, err := os.Stat(filepath.Join(repoRoot, "cmd", "clnku"))
+	info, err := os.Stat(filepath.Join(repoRoot, "cmd", "clnkr"))
 	return err == nil && info.IsDir()
 }
 

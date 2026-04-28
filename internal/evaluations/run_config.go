@@ -12,7 +12,7 @@ type RunConfig struct {
 }
 
 // EffectiveAgent resolves the agent for a trial with precedence: task > suite > run default.
-// When no level sets the agent, the default is clnku.
+// When no level sets the agent, the default is clnkr.
 func EffectiveAgent(task, suite, runDefault Agent) Agent {
 	if task != "" {
 		return task
@@ -23,7 +23,7 @@ func EffectiveAgent(task, suite, runDefault Agent) Agent {
 	if runDefault != "" {
 		return runDefault
 	}
-	return AgentClnku
+	return AgentClnkr
 }
 
 // LoadRunConfigFromEnv loads evaluation runtime configuration from CLNKR_EVALUATION_*.
