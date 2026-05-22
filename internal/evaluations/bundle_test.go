@@ -666,7 +666,7 @@ func TestNormalizeOutcomeUnquotesGitPaths(t *testing.T) {
 		TranscriptEvents: []TranscriptEvent{{Kind: "state_update", Cwd: repoRoot}},
 		ExitCode:         0,
 	}
-	if err := captureGitDiffArtifacts(context.Background(), repoRoot, indexPath, &artifacts); err != nil {
+	if err := captureGitDiffArtifacts(context.Background(), repoRoot, indexPath, "HEAD", &artifacts); err != nil {
 		t.Fatalf("captureGitDiffArtifacts(): %v", err)
 	}
 
@@ -714,7 +714,7 @@ func TestCaptureGitDiffArtifactsDisablesRenameDetection(t *testing.T) {
 		TranscriptEvents: []TranscriptEvent{{Kind: "state_update", Cwd: repoRoot}},
 		ExitCode:         0,
 	}
-	if err := captureGitDiffArtifacts(context.Background(), repoRoot, indexPath, &artifacts); err != nil {
+	if err := captureGitDiffArtifacts(context.Background(), repoRoot, indexPath, "HEAD", &artifacts); err != nil {
 		t.Fatalf("captureGitDiffArtifacts(): %v", err)
 	}
 
@@ -817,19 +817,19 @@ func sampleRunArtifacts(t *testing.T) RunArtifacts {
 	finishedAt := startedAt.Add(2 * time.Second)
 
 	return RunArtifacts{
-		SuiteID:         "default",
-		TaskID:          "001-basic-edit",
-		TrialID:         "trial-123",
-		SuiteTaskIndex:  0,
-		TrialAttempt:    0,
-		Mode:            ModeMockProvider,
-		Agent:           AgentClnkr,
-		AgentVersion:    "0.1.0-test",
-		AgentCommand:    []string{"clnkr", "--eval"},
-		ProviderModel:   "test-model",
-		ProviderBaseURL: "http://127.0.0.1:9999",
-		StartedAt:       startedAt,
-		FinishedAt:      finishedAt,
+		SuiteID:          "default",
+		TaskID:           "001-basic-edit",
+		TrialID:          "trial-123",
+		SuiteTaskIndex:   0,
+		TrialAttempt:     0,
+		Mode:             ModeMockProvider,
+		Agent:            AgentClnkr,
+		AgentVersion:     "0.1.0-test",
+		AgentCommand:     []string{"clnkr", "--eval"},
+		ProviderModel:    "test-model",
+		ProviderBaseURL:  "http://127.0.0.1:9999",
+		StartedAt:        startedAt,
+		FinishedAt:       finishedAt,
 		SystemPrompt:     messages[0].Content,
 		Trajectory:       string(trajectoryBytes),
 		EventLog:         eventLog,
