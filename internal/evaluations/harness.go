@@ -16,7 +16,10 @@ import (
 
 // Keep temp-index add batches comfortably below ARG_MAX so large untracked sets
 // never fail on argv size.
-const gitAddIntentBatchByteLimit = 64 * 1024
+const (
+	gitAddIntentBatchByteLimit = 64 * 1024
+	defaultSetupTimeoutSeconds = 120
+)
 
 // Harness coordinates evaluation trials and resolves the clnkr binary only when
 // a clnkr trial actually needs it.
@@ -74,6 +77,8 @@ type RunArtifacts struct {
 	SystemPrompt          string
 	Trajectory            string
 	EventLog              string
+	SetupCommandOutput    string
+	HasSetupCommandOutput bool
 	TranscriptEvents      []TranscriptEvent
 	Commands              []CommandRecord
 	RawAgentArtifacts     []RawAgentArtifact
@@ -238,12 +243,6 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 		}()
 	}
 
-	if artifacts.Agent == AgentClnkr {
-		if err := h.ensureClnkrBinary(ctx); err != nil {
-			return RunArtifacts{}, fmt.Errorf("ensure clnkr binary: %w", err)
-		}
-	}
-
 	var mockProvider *MockProvider
 	if mode == ModeMockProvider {
 		turns, err := loadTurns(filepath.Join(taskRoot, task.ScriptedTurnsFile))
@@ -274,6 +273,38 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 		env = appendEnvFromHostIfSet(env, "ANTHROPIC_API_KEY")
 		env = appendEnvFromHostIfSet(env, "ANTHROPIC_BASE_URL")
 		env = appendEnvFromHostIfSet(env, "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS")
+	}
+
+	if len(task.SetupCommand) > 0 {
+		setupResult, setupErr := runSetupCommand(ctx, task, workspaceDir, env)
+		artifacts.SetupCommandOutput = setupResult.Stdout + setupResult.Stderr
+		artifacts.HasSetupCommandOutput = true
+		if setupErr != nil {
+			return RunArtifacts{}, fmt.Errorf("run setup_command: %w", setupErr)
+		}
+		if setupResult.TimedOut || setupResult.ExitCode != 0 {
+			result := setupCommandFailureResult(task.SetupCommand, setupResult.TimeoutSeconds, setupResult.Stdout, setupResult.Stderr, setupResult.ExitCode, setupResult.TimedOut)
+			artifacts.GraderResults = []GraderResult{result}
+			artifacts.FailedRequiredGraders = []GraderResult{result}
+			artifacts.TrialPassed = false
+			if mockProvider != nil {
+				artifacts.ProviderRequests = mockProvider.Requests()
+				artifacts.ProviderResponses = collectProviderResponses(artifacts.ProviderRequests)
+			}
+			artifacts.WorkspaceRoot = workspaceDir
+			artifacts.HomeDir = homeDir
+			artifacts.ConfigDir = configDir
+			artifacts.StateDir = stateDir
+			artifacts.TempDir = h.tempRoot
+			artifacts.FinishedAt = time.Now().UTC()
+			return artifacts, nil
+		}
+	}
+
+	if artifacts.Agent == AgentClnkr {
+		if err := h.ensureClnkrBinary(ctx); err != nil {
+			return RunArtifacts{}, fmt.Errorf("ensure clnkr binary: %w", err)
+		}
 	}
 
 	adapterReq := AdapterRequest{
@@ -458,6 +489,57 @@ func runCommand(ctx context.Context, cwd string, env []string, binary string, ar
 		return stdout.String(), stderr.String(), exitErr.ExitCode(), nil
 	}
 	return stdout.String(), stderr.String(), 0, fmt.Errorf("run %q: %w", strings.Join(append([]string{binary}, args...), " "), err)
+}
+
+type setupCommandResult struct {
+	Stdout         string
+	Stderr         string
+	ExitCode       int
+	TimedOut       bool
+	TimeoutSeconds int
+}
+
+func runSetupCommand(ctx context.Context, task Task, workspaceDir string, env []string) (setupCommandResult, error) {
+	if len(task.SetupCommand) == 0 {
+		return setupCommandResult{}, fmt.Errorf("setup_command is empty")
+	}
+
+	timeoutSeconds := task.SetupTimeoutSeconds
+	if timeoutSeconds <= 0 {
+		timeoutSeconds = defaultSetupTimeoutSeconds
+	}
+	cmdCtx, cancel := context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(cmdCtx, task.SetupCommand[0], task.SetupCommand[1:]...)
+	cmd.Dir = workspaceDir
+	cmd.Env = env
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	runErr := cmd.Run()
+	result := setupCommandResult{
+		Stdout:         stdout.String(),
+		Stderr:         stderr.String(),
+		TimeoutSeconds: timeoutSeconds,
+	}
+	if runErr == nil {
+		return result, nil
+	}
+	if cmdCtx.Err() == context.DeadlineExceeded {
+		result.ExitCode = -1
+		result.TimedOut = true
+		return result, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		result.ExitCode = exitErr.ExitCode()
+		return result, nil
+	}
+	return result, fmt.Errorf("run setup_command %q: %w", strings.Join(task.SetupCommand, " "), runErr)
 }
 
 func repoGitEnv(overrides ...string) []string {

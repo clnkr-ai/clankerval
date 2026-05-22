@@ -361,6 +361,248 @@ func TestRunTrial(t *testing.T) {
 		}
 	})
 
+	t.Run("setup command runs before adapter and diff capture", func(t *testing.T) {
+		ctx := context.Background()
+		roots := newHarnessTestRoots(t)
+		harness := newHarnessForTests(t, ctx, roots.repoRoot, roots.evalsDir)
+		fake := &fakeAdapter{
+			result: AdapterResult{ExitCode: 0, AgentVersion: "fake-1.0", AgentCommand: []string{"fake-agent"}},
+			mutate: func(req AdapterRequest) error {
+				data, err := os.ReadFile(filepath.Join(req.WorkspaceDir, "setup-marker.txt"))
+				if err != nil {
+					return fmt.Errorf("read setup marker before adapter work: %w", err)
+				}
+				if string(data) != "setup-ready\n" {
+					return fmt.Errorf("setup marker = %q, want setup-ready", data)
+				}
+				return os.WriteFile(filepath.Join(req.WorkspaceDir, trackedDummyNotePath()), []byte("agent-ready\n"), 0o644)
+			},
+		}
+		harness.adapter = fake
+
+		suite, task := writeTempSuiteTask(t, roots, "setup-success", map[string]string{
+			"input/instruction.txt":  "Use setup-marker.txt, then finish.\n",
+			"input/model-turns.json": `["{\"type\":\"done\",\"summary\":\"finished\"}"]`,
+			"task.json": `{
+  "id": "setup-success",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": ".",
+  "full_send": true,
+  "step_limit": 5,
+  "setup_command": ["bash", "-c", "printf 'setup-ready\n' > setup-marker.txt && printf setup-out"],
+  "graders": {"outcome_diff": {"enabled": true, "required": true}}
+}`,
+		})
+
+		artifacts, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider})
+		if err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if !fake.called {
+			t.Fatal("adapter was not called")
+		}
+		if !artifacts.TrialPassed {
+			t.Fatalf("trial_passed = false, want true; graders=%#v", artifacts.GraderResults)
+		}
+		if !artifacts.HasSetupCommandOutput || artifacts.SetupCommandOutput != "setup-out" {
+			t.Fatalf("setup output = (%v, %q), want true/setup-out", artifacts.HasSetupCommandOutput, artifacts.SetupCommandOutput)
+		}
+		if !strings.Contains(artifacts.GitNameStatus, "A\tsetup-marker.txt") {
+			t.Fatalf("GitNameStatus = %q, want setup marker addition", artifacts.GitNameStatus)
+		}
+	})
+
+	t.Run("setup command failure skips adapter and records setup grader", func(t *testing.T) {
+		ctx := context.Background()
+		roots := newHarnessTestRoots(t)
+		harness := newHarnessForTests(t, ctx, roots.repoRoot, roots.evalsDir)
+		fake := &fakeAdapter{result: AdapterResult{ExitCode: 0, AgentCommand: []string{"fake-agent"}}}
+		harness.adapter = fake
+
+		suite, task := writeTempSuiteTask(t, roots, "setup-failure", map[string]string{
+			"input/instruction.txt":  "This should not reach the adapter.\n",
+			"input/model-turns.json": `["{\"type\":\"done\",\"summary\":\"finished\"}"]`,
+			"task.json": `{
+  "id": "setup-failure",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": ".",
+  "full_send": true,
+  "step_limit": 5,
+  "setup_command": ["bash", "-c", "printf setup-out; printf setup-err >&2; exit 7"],
+  "graders": {"outcome_diff": {"enabled": true, "required": true}}
+}`,
+		})
+
+		artifacts, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider})
+		if err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if fake.called {
+			t.Fatal("adapter was called after setup failure")
+		}
+		if artifacts.TrialPassed {
+			t.Fatal("trial_passed = true, want false")
+		}
+		if artifacts.SetupCommandOutput != "setup-outsetup-err" {
+			t.Fatalf("SetupCommandOutput = %q, want combined setup output", artifacts.SetupCommandOutput)
+		}
+		if len(artifacts.GraderResults) != 1 {
+			t.Fatalf("GraderResults count = %d, want 1: %#v", len(artifacts.GraderResults), artifacts.GraderResults)
+		}
+		result := artifacts.GraderResults[0]
+		if result.GraderID != setupCommandGraderID || result.TargetKind != graderTargetSetup || result.Passed {
+			t.Fatalf("setup result = %#v, want failing setup_command setup result", result)
+		}
+		if !strings.Contains(result.Message, "exit code 7") {
+			t.Fatalf("setup message = %q, want exit code", result.Message)
+		}
+		if len(artifacts.FailedRequiredGraders) != 1 || artifacts.FailedRequiredGraders[0].GraderID != setupCommandGraderID {
+			t.Fatalf("FailedRequiredGraders = %#v, want setup failure", artifacts.FailedRequiredGraders)
+		}
+		if artifacts.GitDiff != "" || artifacts.GitNameStatus != "" || artifacts.GitNumstat != "" {
+			t.Fatalf("git diff artifacts = %q/%q/%q, want empty on setup failure", artifacts.GitDiff, artifacts.GitNameStatus, artifacts.GitNumstat)
+		}
+	})
+
+	t.Run("setup command failure preserves mock provider artifacts", func(t *testing.T) {
+		ctx := context.Background()
+		roots := newHarnessTestRoots(t)
+		harness := newHarnessForTests(t, ctx, roots.repoRoot, roots.evalsDir)
+		fake := &fakeAdapter{result: AdapterResult{ExitCode: 0, AgentCommand: []string{"fake-agent"}}}
+		harness.adapter = fake
+
+		suite, task := writeTempSuiteTask(t, roots, "setup-provider-failure", map[string]string{
+			"input/instruction.txt":  "This should not reach the adapter.\n",
+			"input/model-turns.json": `["{\"type\":\"done\",\"summary\":\"setup saw provider\"}"]`,
+			"input/project/go.mod":   "module setup-provider-failure\n\ngo 1.22\n",
+			"input/project/setup-post.go": `package main
+
+import (
+	"bytes"
+	"net/http"
+	"os"
+)
+
+func main() {
+	body := []byte(` + "`" + `{"model":"setup-model","messages":[{"role":"user","content":"setup"}]}` + "`" + `)
+	resp, err := http.Post(os.Getenv("CLNKR_BASE_URL")+"/chat/completions", "application/json", bytes.NewReader(body))
+	if err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+	os.Exit(7)
+}
+`,
+			"task.json": `{
+  "id": "setup-provider-failure",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "input/project",
+  "full_send": true,
+  "step_limit": 5,
+  "setup_command": ["go", "run", "setup-post.go"],
+  "graders": {"outcome_diff": {"enabled": true, "required": true}}
+}`,
+		})
+
+		artifacts, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider})
+		if err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if fake.called {
+			t.Fatal("adapter was called after setup failure")
+		}
+		if artifacts.TrialPassed {
+			t.Fatal("trial_passed = true, want false")
+		}
+		if len(artifacts.ProviderRequests) != 1 {
+			t.Fatalf("ProviderRequests count = %d, want 1: %#v", len(artifacts.ProviderRequests), artifacts.ProviderRequests)
+		}
+		if artifacts.ProviderRequests[0].Model != "setup-model" {
+			t.Fatalf("provider request model = %q, want setup-model", artifacts.ProviderRequests[0].Model)
+		}
+		if len(artifacts.ProviderResponses) != 1 || !strings.Contains(artifacts.ProviderResponses[0], "setup saw provider") {
+			t.Fatalf("ProviderResponses = %#v, want setup mock response", artifacts.ProviderResponses)
+		}
+	})
+
+	t.Run("setup command timeout records timed out failure", func(t *testing.T) {
+		ctx := context.Background()
+		roots := newHarnessTestRoots(t)
+		harness := newHarnessForTests(t, ctx, roots.repoRoot, roots.evalsDir)
+		fake := &fakeAdapter{result: AdapterResult{ExitCode: 0}}
+		harness.adapter = fake
+
+		suite, task := writeTempSuiteTask(t, roots, "setup-timeout", map[string]string{
+			"input/instruction.txt":  "This should not reach the adapter.\n",
+			"input/model-turns.json": `["{\"type\":\"done\",\"summary\":\"finished\"}"]`,
+			"task.json": `{
+  "id": "setup-timeout",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": ".",
+  "full_send": true,
+  "step_limit": 5,
+  "setup_command": ["bash", "-c", "sleep 2"],
+  "setup_timeout_seconds": 1,
+  "graders": {}
+}`,
+		})
+
+		artifacts, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider})
+		if err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if fake.called || artifacts.TrialPassed || len(artifacts.GraderResults) != 1 {
+			t.Fatalf("timeout artifacts = called:%v passed:%v graders:%#v", fake.called, artifacts.TrialPassed, artifacts.GraderResults)
+		}
+		evidence, ok := artifacts.GraderResults[0].Evidence.(SetupCommandEvidence)
+		if !ok {
+			t.Fatalf("Evidence type = %T, want SetupCommandEvidence", artifacts.GraderResults[0].Evidence)
+		}
+		if !evidence.TimedOut || evidence.ExitCode != -1 {
+			t.Fatalf("timeout evidence = %#v, want timed out exit -1", evidence)
+		}
+	})
+
+	t.Run("setup command uses trial environment", func(t *testing.T) {
+		ctx := context.Background()
+		roots := newHarnessTestRoots(t)
+		harness := newHarnessForTests(t, ctx, roots.repoRoot, roots.evalsDir)
+		t.Setenv("HOME", filepath.Join(t.TempDir(), "host-home"))
+		t.Setenv("CLNKR_API_KEY", "host-key")
+		fake := &fakeAdapter{result: AdapterResult{ExitCode: 0, AgentCommand: []string{"fake-agent"}}}
+		harness.adapter = fake
+
+		suite, task := writeTempSuiteTask(t, roots, "setup-env", map[string]string{
+			"input/instruction.txt":  "Check setup env.\n",
+			"input/model-turns.json": `["{\"type\":\"done\",\"summary\":\"finished\"}"]`,
+			"task.json": `{
+  "id": "setup-env",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": ".",
+  "full_send": true,
+  "step_limit": 5,
+  "setup_command": ["bash", "-c", "test \"$CLNKR_API_KEY\" = dummy-key && case \"$CLNKR_BASE_URL\" in http://*) ;; *) echo \"bad BASE=$CLNKR_BASE_URL\" >&2; exit 2;; esac && case \"$HOME\" in *trial-*/home) exit 0;; *) echo \"bad HOME=$HOME\" >&2; exit 3;; esac"],
+  "graders": {}
+}`,
+		})
+
+		artifacts, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider})
+		if err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if !fake.called {
+			t.Fatal("adapter was not called")
+		}
+		if !artifacts.TrialPassed {
+			t.Fatalf("trial_passed = false, want true; graders=%#v", artifacts.GraderResults)
+		}
+	})
+
 	t.Run("outcome command output observes repo changes before cleanup", func(t *testing.T) {
 		ctx := context.Background()
 		roots := newHarnessTestRoots(t)

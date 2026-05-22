@@ -3,6 +3,7 @@ package evaluations
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -499,6 +500,182 @@ func TestLoadTask(t *testing.T) {
 		}
 		if task.Graders.OutcomeCommandOutput.Enabled {
 			t.Fatal("command output grader should be disabled when absent from JSON")
+		}
+	})
+
+	t.Run("loads task with setup_command", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, filepath.Join(dir, "task.json"), `{
+			"id": "setup-test",
+			"instruction_file": "input/instruction.txt",
+			"working_directory": ".",
+			"step_limit": 5,
+			"full_send": true,
+			"setup_command": ["bash", "-c", "printf setup"],
+			"setup_timeout_seconds": 60,
+			"graders": {
+				"outcome_diff": {"enabled": false, "required": false},
+				"transcript_command_trace": {"enabled": false, "required": false}
+			}
+		}`)
+
+		task, err := LoadTask(filepath.Join(dir, "task.json"))
+		if err != nil {
+			t.Fatalf("LoadTask(): %v", err)
+		}
+		want := []string{"bash", "-c", "printf setup"}
+		if !reflect.DeepEqual(task.SetupCommand, want) {
+			t.Fatalf("SetupCommand = %#v, want %#v", task.SetupCommand, want)
+		}
+		if task.SetupTimeoutSeconds != 60 {
+			t.Fatalf("SetupTimeoutSeconds = %d, want 60", task.SetupTimeoutSeconds)
+		}
+	})
+
+	t.Run("loads task without setup_command", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, filepath.Join(dir, "task.json"), `{
+			"id": "no-setup",
+			"instruction_file": "input/instruction.txt",
+			"working_directory": ".",
+			"step_limit": 5,
+			"full_send": true,
+			"graders": {
+				"outcome_diff": {"enabled": false, "required": false},
+				"transcript_command_trace": {"enabled": false, "required": false}
+			}
+		}`)
+
+		task, err := LoadTask(filepath.Join(dir, "task.json"))
+		if err != nil {
+			t.Fatalf("LoadTask(): %v", err)
+		}
+		if len(task.SetupCommand) != 0 {
+			t.Fatalf("SetupCommand = %#v, want empty", task.SetupCommand)
+		}
+		if task.SetupTimeoutSeconds != 0 {
+			t.Fatalf("SetupTimeoutSeconds = %d, want 0", task.SetupTimeoutSeconds)
+		}
+	})
+
+	t.Run("stores zero timeout when setup_command omits timeout", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, filepath.Join(dir, "task.json"), `{
+			"id": "default-setup-timeout",
+			"instruction_file": "input/instruction.txt",
+			"working_directory": ".",
+			"step_limit": 5,
+			"full_send": true,
+			"setup_command": ["true"],
+			"graders": {
+				"outcome_diff": {"enabled": false, "required": false},
+				"transcript_command_trace": {"enabled": false, "required": false}
+			}
+		}`)
+
+		task, err := LoadTask(filepath.Join(dir, "task.json"))
+		if err != nil {
+			t.Fatalf("LoadTask(): %v", err)
+		}
+		if task.SetupTimeoutSeconds != 0 {
+			t.Fatalf("SetupTimeoutSeconds = %d, want 0; execution applies default", task.SetupTimeoutSeconds)
+		}
+	})
+
+	t.Run("rejects empty setup_command", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, filepath.Join(dir, "task.json"), `{
+			"id": "empty-setup",
+			"instruction_file": "input/instruction.txt",
+			"working_directory": ".",
+			"step_limit": 5,
+			"full_send": true,
+			"setup_command": [],
+			"graders": {
+				"outcome_diff": {"enabled": false, "required": false},
+				"transcript_command_trace": {"enabled": false, "required": false}
+			}
+		}`)
+
+		_, err := LoadTask(filepath.Join(dir, "task.json"))
+		if err == nil {
+			t.Fatal("LoadTask() error = nil, want setup_command validation failure")
+		}
+		if !strings.Contains(err.Error(), "setup_command") {
+			t.Fatalf("error = %v, want setup_command validation error", err)
+		}
+	})
+
+	t.Run("rejects null setup_command", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, filepath.Join(dir, "task.json"), `{
+			"id": "null-setup",
+			"instruction_file": "input/instruction.txt",
+			"working_directory": ".",
+			"step_limit": 5,
+			"full_send": true,
+			"setup_command": null,
+			"graders": {
+				"outcome_diff": {"enabled": false, "required": false},
+				"transcript_command_trace": {"enabled": false, "required": false}
+			}
+		}`)
+
+		_, err := LoadTask(filepath.Join(dir, "task.json"))
+		if err == nil {
+			t.Fatal("LoadTask() error = nil, want setup_command validation failure")
+		}
+		if !strings.Contains(err.Error(), "setup_command") {
+			t.Fatalf("error = %v, want setup_command validation error", err)
+		}
+	})
+
+	t.Run("rejects invalid setup timeout", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, filepath.Join(dir, "task.json"), `{
+			"id": "bad-setup-timeout",
+			"instruction_file": "input/instruction.txt",
+			"working_directory": ".",
+			"step_limit": 5,
+			"full_send": true,
+			"setup_command": ["true"],
+			"setup_timeout_seconds": 0,
+			"graders": {
+				"outcome_diff": {"enabled": false, "required": false},
+				"transcript_command_trace": {"enabled": false, "required": false}
+			}
+		}`)
+
+		_, err := LoadTask(filepath.Join(dir, "task.json"))
+		if err == nil {
+			t.Fatal("LoadTask() error = nil, want setup_timeout_seconds validation failure")
+		}
+		if !strings.Contains(err.Error(), "setup_timeout_seconds") {
+			t.Fatalf("error = %v, want setup_timeout_seconds validation error", err)
+		}
+	})
+
+	t.Run("rejects setup timeout without setup_command", func(t *testing.T) {
+		dir := t.TempDir()
+		writeTestFile(t, filepath.Join(dir, "task.json"), `{
+			"id": "timeout-without-setup",
+			"instruction_file": "input/instruction.txt",
+			"working_directory": ".",
+			"step_limit": 5,
+			"full_send": true,
+			"setup_timeout_seconds": 60,
+			"graders": {
+				"outcome_diff": {"enabled": false, "required": false},
+				"transcript_command_trace": {"enabled": false, "required": false}
+			}
+		}`)
+
+		_, err := LoadTask(filepath.Join(dir, "task.json"))
+		if err == nil {
+			t.Fatal("LoadTask() error = nil, want setup_timeout_seconds without setup_command validation failure")
+		}
+		if !strings.Contains(err.Error(), "setup_timeout_seconds") {
+			t.Fatalf("error = %v, want setup_timeout_seconds validation error", err)
 		}
 	})
 
