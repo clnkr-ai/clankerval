@@ -26,16 +26,18 @@ type failurePolicyJSON struct {
 }
 
 type taskJSON struct {
-	ID                 *string     `json:"id"`
-	InstructionFile    *string     `json:"instruction_file"`
-	ScriptedTurnsFile  *string     `json:"scripted_turns_file"`
-	WorkingDirectory   *string     `json:"working_directory"`
-	StepLimit          *int        `json:"step_limit"`
-	FullSend           *bool       `json:"full_send"`
-	SeedTranscriptFile *string     `json:"seed_transcript_file"`
-	Mode               *string     `json:"mode"`
-	Agent              *string     `json:"agent"`
-	Graders            *graderJSON `json:"graders"`
+	ID                  *string         `json:"id"`
+	InstructionFile     *string         `json:"instruction_file"`
+	ScriptedTurnsFile   *string         `json:"scripted_turns_file"`
+	WorkingDirectory    *string         `json:"working_directory"`
+	StepLimit           *int            `json:"step_limit"`
+	FullSend            *bool           `json:"full_send"`
+	SeedTranscriptFile  *string         `json:"seed_transcript_file"`
+	SetupCommand        json.RawMessage `json:"setup_command"`
+	SetupTimeoutSeconds *int            `json:"setup_timeout_seconds"`
+	Mode                *string         `json:"mode"`
+	Agent               *string         `json:"agent"`
+	Graders             *graderJSON     `json:"graders"`
 }
 
 type graderJSON struct {
@@ -262,14 +264,31 @@ func validateTaskJSON(path string, raw taskJSON) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
+	setupCommand, setupCommandPresent, err := validateSetupCommandJSON(path, raw.SetupCommand)
+	if err != nil {
+		return Task{}, err
+	}
+	setupTimeoutSeconds := 0
+	if setupCommandPresent {
+		if raw.SetupTimeoutSeconds != nil {
+			if *raw.SetupTimeoutSeconds <= 0 {
+				return Task{}, fmt.Errorf("%s: setup_timeout_seconds must be > 0", path)
+			}
+			setupTimeoutSeconds = *raw.SetupTimeoutSeconds
+		}
+	} else if raw.SetupTimeoutSeconds != nil {
+		return Task{}, fmt.Errorf("%s: setup_timeout_seconds requires setup_command", path)
+	}
 
 	task := Task{
-		ID:               id,
-		InstructionFile:  instructionFile,
-		WorkingDirectory: workingDirectory,
-		StepLimit:        stepLimit,
-		FullSend:         *raw.FullSend,
-		Graders:          graders,
+		ID:                  id,
+		InstructionFile:     instructionFile,
+		WorkingDirectory:    workingDirectory,
+		StepLimit:           stepLimit,
+		FullSend:            *raw.FullSend,
+		SetupCommand:        setupCommand,
+		SetupTimeoutSeconds: setupTimeoutSeconds,
+		Graders:             graders,
 	}
 
 	if raw.SeedTranscriptFile != nil {
@@ -310,6 +329,23 @@ func validateTaskJSON(path string, raw taskJSON) (Task, error) {
 		return Task{}, fmt.Errorf("%s: scripted_turns_file is required when mode is mock-provider", path)
 	}
 	return task, nil
+}
+
+func validateSetupCommandJSON(path string, raw json.RawMessage) ([]string, bool, error) {
+	if len(raw) == 0 {
+		return nil, false, nil
+	}
+	if strings.TrimSpace(string(raw)) == "null" {
+		return nil, true, fmt.Errorf("%s: setup_command must be non-empty when present", path)
+	}
+	var command []string
+	if err := json.Unmarshal(raw, &command); err != nil {
+		return nil, true, fmt.Errorf("%s: setup_command must be an array of strings: %w", path, err)
+	}
+	if len(command) == 0 {
+		return nil, true, fmt.Errorf("%s: setup_command must be non-empty when present", path)
+	}
+	return append([]string(nil), command...), true, nil
 }
 
 func validateGradersJSON(path string, raw graderJSON) (GraderConfig, error) {

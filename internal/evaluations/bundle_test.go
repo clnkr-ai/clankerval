@@ -316,6 +316,9 @@ func TestWriteTrialBundle(t *testing.T) {
 	if bundle.Artifacts.OutcomeNumstat != "outcome/numstat.txt" {
 		t.Fatalf("outcome numstat path = %q, want outcome/numstat.txt", bundle.Artifacts.OutcomeNumstat)
 	}
+	if bundle.Artifacts.SetupCommandOutput != "" {
+		t.Fatalf("setup output path = %q, want empty", bundle.Artifacts.SetupCommandOutput)
+	}
 
 	// Schema v3: old raw artifacts must not exist.
 	for _, rel := range []string{"raw/transcript.json", "raw/events.jsonl"} {
@@ -356,6 +359,38 @@ func TestWriteTrialBundle(t *testing.T) {
 	}
 	if got, want := string(rawResponses), artifacts.ProviderResponses[0]+"\n"; got != want {
 		t.Fatalf("raw provider responses = %q, want %q", got, want)
+	}
+}
+
+func TestWriteTrialBundleWritesSetupCommandOutput(t *testing.T) {
+	t.Parallel()
+
+	artifacts := sampleRunArtifacts(t)
+	artifacts.HasSetupCommandOutput = true
+	artifacts.SetupCommandOutput = "setup-outsetup-err"
+	root := filepath.Join(t.TempDir(), artifacts.TrialID)
+
+	bundle, err := WriteTrialBundle(root, artifacts, nil)
+	if err != nil {
+		t.Fatalf("WriteTrialBundle(): %v", err)
+	}
+	if bundle.Artifacts.SetupCommandOutput != "setup-command-output.txt" {
+		t.Fatalf("SetupCommandOutput path = %q, want setup-command-output.txt", bundle.Artifacts.SetupCommandOutput)
+	}
+	data, err := os.ReadFile(filepath.Join(root, bundle.Artifacts.SetupCommandOutput))
+	if err != nil {
+		t.Fatalf("ReadFile(setup output): %v", err)
+	}
+	if string(data) != artifacts.SetupCommandOutput {
+		t.Fatalf("setup output file = %q, want %q", data, artifacts.SetupCommandOutput)
+	}
+
+	loaded, err := LoadBundle(root)
+	if err != nil {
+		t.Fatalf("LoadBundle(): %v", err)
+	}
+	if loaded.Artifacts.SetupCommandOutput != "setup-command-output.txt" {
+		t.Fatalf("loaded setup output path = %q, want setup-command-output.txt", loaded.Artifacts.SetupCommandOutput)
 	}
 }
 

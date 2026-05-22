@@ -14,9 +14,11 @@ const (
 	outcomeDiffGraderID            = "outcome_diff"
 	transcriptCommandTraceGraderID = "transcript_command_trace"
 	outcomeCommandOutputGraderID   = "outcome_command_output"
+	setupCommandGraderID           = "setup_command"
 
 	graderTargetOutcome    = "outcome"
 	graderTargetTranscript = "transcript"
+	graderTargetSetup      = "setup"
 )
 
 // TranscriptCommandTraceEvidence captures the command trace used by the transcript grader.
@@ -33,6 +35,45 @@ type TranscriptCommandTraceEvidence struct {
 type OutcomeDiffEvidence struct {
 	DiffSize int  `json:"diff_size"`
 	HasDiff  bool `json:"has_diff"`
+}
+
+// SetupCommandEvidence captures setup command execution before agent launch.
+type SetupCommandEvidence struct {
+	Command  []string `json:"command"`
+	ExitCode int      `json:"exit_code"`
+	Stdout   string   `json:"stdout"`
+	Stderr   string   `json:"stderr"`
+	TimedOut bool     `json:"timed_out"`
+}
+
+func setupCommandFailureResult(command []string, timeoutSeconds int, stdout, stderr string, exitCode int, timedOut bool) GraderResult {
+	message := fmt.Sprintf("setup_command failed: exit code %d", exitCode)
+	if timedOut {
+		message = fmt.Sprintf("setup_command timed out after %ds", timeoutSeconds)
+	} else if snippet := strings.TrimSpace(stderr); snippet != "" {
+		message = fmt.Sprintf("%s: %s", message, truncateForMessage(snippet, 200))
+	}
+
+	return GraderResult{
+		GraderID:   setupCommandGraderID,
+		TargetKind: graderTargetSetup,
+		Passed:     false,
+		Message:    message,
+		Evidence: SetupCommandEvidence{
+			Command:  append([]string(nil), command...),
+			ExitCode: exitCode,
+			Stdout:   stdout,
+			Stderr:   stderr,
+			TimedOut: timedOut,
+		},
+	}
+}
+
+func truncateForMessage(value string, limit int) string {
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	return value[:limit] + "..."
 }
 
 // GradeOutcomeDiff checks that the agent produced a non-empty git diff.

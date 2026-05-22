@@ -72,11 +72,19 @@ Declares \fBid\fP, \fBdescription\fP, \fBmode\fP, optional \fBagent\fP, \fBtrial
 
 .TP
 \fBtask.json\fP
-Declares \fBinstruction_file\fP, \fBworking_directory\fP, \fBstep_limit\fP, \fBfull_send\fP, optional \fBseed_transcript_file\fP, optional \fBmode\fP, optional \fBagent\fP, optional \fBscripted_turns_file\fP, and grader configuration.
+Declares \fBinstruction_file\fP, \fBworking_directory\fP, \fBstep_limit\fP, \fBfull_send\fP, optional \fBseed_transcript_file\fP, optional \fBsetup_command\fP, optional \fBsetup_timeout_seconds\fP, optional \fBmode\fP, optional \fBagent\fP, optional \fBscripted_turns_file\fP, and grader configuration.
 
 .TP
 \fBscripted_turns_file\fP
 Required only for \fBmock-provider\fP tasks.
+
+.TP
+\fBsetup_command\fP
+Optional task command run in the trial workspace after the baseline ref is created and before the agent starts. The command is exec'd directly; use a shell explicitly when shell parsing is needed.
+
+.TP
+\fBsetup_timeout_seconds\fP
+Optional setup timeout in seconds. Defaults to 120 when \fBsetup_command\fP is present.
 
 .TP
 \fBinput/project/AGENTS.md\fP
@@ -174,6 +182,35 @@ export ANTHROPIC_API_KEY=your-anthropic-key
 
 clankerval run --suite default --agent claude
 .EE
+
+.PP
+Run task setup before the agent starts:
+
+.EX
+{
+  "id": "001-investigate",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "input/project",
+  "full_send": true,
+  "step_limit": 10,
+  "setup_command": [
+    "bash",
+    "-c",
+    "git apply ../bug.patch && printf '%s\\n' 'incident=checkout-failure' > incident.txt"
+  ],
+  "setup_timeout_seconds": 30,
+  "graders": {
+    "outcome_diff": {
+      "enabled": true,
+      "required": true
+    }
+  }
+}
+.EE
+
+.PP
+If setup exits nonzero or times out, the trial fails before agent launch. The bundle includes \fBsetup-command-output.txt\fP and a \fBsetup_command\fP grader result with stdout, stderr, exit code, and timeout state.
 
 .PP
 Run the checked-in manual Claude smoke suite:

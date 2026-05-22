@@ -76,9 +76,37 @@ At the suite level, `suite.json` selects:
 At the task level, `task.json` selects:
 - `instruction_file`, `working_directory`, `full_send`, `step_limit`
 - optional `seed_transcript_file`
+- optional `setup_command` and `setup_timeout_seconds`
 - optional `mode` and `agent`
 - `scripted_turns_file` for `mock-provider` tasks
 - grader configuration
+
+`setup_command` runs in the trial workspace after the baseline ref is created and before the agent starts. It is exec'd directly, so use a shell explicitly when shell parsing is needed:
+
+```json
+{
+  "id": "001-investigate",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "input/project",
+  "full_send": true,
+  "step_limit": 10,
+  "setup_command": [
+    "bash",
+    "-c",
+    "git apply ../bug.patch && printf '%s\n' 'incident=checkout-failure' > incident.txt"
+  ],
+  "setup_timeout_seconds": 30,
+  "graders": {
+    "outcome_diff": {
+      "enabled": true,
+      "required": true
+    }
+  }
+}
+```
+
+If setup exits nonzero or times out, the trial fails before agent launch. The bundle includes `setup-command-output.txt` and a `setup_command` grader result with stdout, stderr, exit code, and timeout state.
 
 Agent precedence is `task.agent > suite.agent > CLI --agent`, with `clnkr` as the default when no level sets it.
 

@@ -53,6 +53,7 @@ type BundleArtifacts struct {
 	RawCommands          string `json:"raw_commands"`
 	RawProviderRequests  string `json:"raw_provider_requests"`
 	RawProviderResponses string `json:"raw_provider_responses"`
+	SetupCommandOutput   string `json:"setup_command_output,omitempty"`
 	NormalizedTranscript string `json:"normalized_transcript"`
 	NormalizedOutcome    string `json:"normalized_outcome"`
 	NormalizedGraders    string `json:"normalized_graders"`
@@ -101,6 +102,9 @@ func WriteTrialBundle(root string, artifacts RunArtifacts, graderResults []Grade
 		OutcomeNameStatus:    "outcome/name-status.txt",
 		OutcomeNumstat:       "outcome/numstat.txt",
 	}
+	if artifacts.HasSetupCommandOutput {
+		artifactPaths.SetupCommandOutput = "setup-command-output.txt"
+	}
 
 	writtenChecksums := map[string]string{}
 
@@ -146,6 +150,11 @@ func WriteTrialBundle(root string, artifacts RunArtifacts, graderResults []Grade
 		return Bundle{}, fmt.Errorf("write provider responses: %w", err)
 	}
 
+	if artifacts.HasSetupCommandOutput {
+		if err := writeFile(root, artifactPaths.SetupCommandOutput, []byte(artifacts.SetupCommandOutput), writtenChecksums, true); err != nil {
+			return Bundle{}, fmt.Errorf("write setup command output: %w", err)
+		}
+	}
 	if err := writeJSONL(root, artifactPaths.NormalizedTranscript, normalizedTranscript, writtenChecksums, true); err != nil {
 		return Bundle{}, fmt.Errorf("write normalized transcript: %w", err)
 	}
@@ -227,6 +236,18 @@ func LoadBundle(root string) (Bundle, error) {
 		}
 		if _, err := os.Stat(path); err != nil {
 			return Bundle{}, fmt.Errorf("load bundle missing required artifact %q: %w", rel, err)
+		}
+	}
+	if bundle.Artifacts.SetupCommandOutput != "" {
+		if err := validateBundleRelativePath(root, bundle.Artifacts.SetupCommandOutput); err != nil {
+			return Bundle{}, fmt.Errorf("load bundle validate setup command output path %q: %w", bundle.Artifacts.SetupCommandOutput, err)
+		}
+		path, err := bundleArtifactPath(root, bundle.Artifacts.SetupCommandOutput)
+		if err != nil {
+			return Bundle{}, fmt.Errorf("load bundle resolve setup command output path %q: %w", bundle.Artifacts.SetupCommandOutput, err)
+		}
+		if _, err := os.Stat(path); err != nil {
+			return Bundle{}, fmt.Errorf("load bundle missing setup command output artifact %q: %w", bundle.Artifacts.SetupCommandOutput, err)
 		}
 	}
 

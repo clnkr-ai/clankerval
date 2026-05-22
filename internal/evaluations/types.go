@@ -39,16 +39,18 @@ type FailurePolicy struct {
 
 // Task describes one evaluation task plus grading configuration.
 type Task struct {
-	ID                 string
-	InstructionFile    string
-	ScriptedTurnsFile  string
-	WorkingDirectory   string
-	StepLimit          int
-	FullSend           bool
-	SeedTranscriptFile string
-	Mode               Mode
-	Agent              Agent
-	Graders            GraderConfig
+	ID                  string
+	InstructionFile     string
+	ScriptedTurnsFile   string
+	WorkingDirectory    string
+	StepLimit           int
+	FullSend            bool
+	SeedTranscriptFile  string
+	SetupCommand        []string
+	SetupTimeoutSeconds int
+	Mode                Mode
+	Agent               Agent
+	Graders             GraderConfig
 }
 
 // TrialPolicyResult summarizes the first-wave required-grader pass policy.
