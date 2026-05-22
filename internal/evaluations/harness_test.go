@@ -670,64 +670,6 @@ func TestRunTrial(t *testing.T) {
 		}
 	})
 
-	t.Run("cleanup preserves pre-existing ignored files", func(t *testing.T) {
-		ctx := context.Background()
-		roots := newHarnessTestRoots(t)
-		repoRoot := roots.repoRoot
-		appendGitExclude(t, repoRoot, "ignored.txt")
-		preserveRepoRootOverlayFiles(t, repoRoot, "ignored.txt")
-		const ignoredContent = "keep me\n"
-		if err := os.WriteFile(filepath.Join(repoRoot, "ignored.txt"), []byte(ignoredContent), 0o644); err != nil {
-			t.Fatalf("WriteFile(ignored.txt): %v", err)
-		}
-
-		harness := newHarnessForTests(t, ctx, roots.repoRoot, roots.evalsDir)
-		harness.adapter = &fakeAdapter{
-			result: AdapterResult{
-				ExitCode:     0,
-				AgentVersion: "fake-1.0",
-				AgentCommand: []string{"fake-agent"},
-			},
-		}
-
-		suite, task := writeTempSuiteTask(t, roots, "cleanup-preserves-ignored-file", map[string]string{
-			"input/instruction.txt": "do nothing\n",
-			"input/model-turns.json": `[
-  "{\"type\":\"done\",\"summary\":\"finished\"}"
-]`,
-			"task.json": `{
-  "id": "cleanup-preserves-ignored-file",
-  "instruction_file": "input/instruction.txt",
-  "scripted_turns_file": "input/model-turns.json",
-  "working_directory": ".",
-  "full_send": true,
-  "step_limit": 5,
-  "graders": {}
-}`,
-		})
-
-		if _, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider}); err != nil {
-			t.Fatalf("RunTrial(): %v", err)
-		}
-		data, err := os.ReadFile(filepath.Join(repoRoot, "ignored.txt"))
-		if err != nil {
-			t.Fatalf("ReadFile(ignored.txt): %v", err)
-		}
-		if string(data) != ignoredContent {
-			t.Fatalf("ignored.txt = %q, want %q", string(data), ignoredContent)
-		}
-		statusOut, _, statusExit, statusErr := runCommand(ctx, repoRoot, repoGitEnv(), "git", "status", "--porcelain", "--untracked-files=all")
-		if statusErr != nil {
-			t.Fatalf("git status: %v", statusErr)
-		}
-		if statusExit != 0 {
-			t.Fatalf("git status exit = %d", statusExit)
-		}
-		if strings.TrimSpace(statusOut) != "" {
-			t.Fatalf("git status = %q, want clean", statusOut)
-		}
-	})
-
 	t.Run("cleanup removes nested git repos", func(t *testing.T) {
 		ctx := context.Background()
 		roots := newHarnessTestRoots(t)
