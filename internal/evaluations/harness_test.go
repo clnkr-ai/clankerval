@@ -499,6 +499,217 @@ func TestRunTrial(t *testing.T) {
 		}
 	})
 
+	t.Run("in-place_committed_changes_are_captured_and_cleaned", func(t *testing.T) {
+		ctx := context.Background()
+		repoRoot := newTempRepoRoot(t)
+		harness := newHarnessForTests(t, ctx, repoRoot)
+		pretrialHead := gitRevParseForTest(t, repoRoot, "HEAD")
+		harness.adapter = &fakeAdapter{
+			result: AdapterResult{
+				ExitCode:     0,
+				AgentVersion: "fake-1.0",
+				AgentCommand: []string{"fake-agent"},
+			},
+			mutate: func(req AdapterRequest) error {
+				if err := os.WriteFile(filepath.Join(req.WorkspaceDir, "committed-answer.txt"), []byte("ready\n"), 0o644); err != nil {
+					return err
+				}
+				if _, stderr, exitCode, err := runCommand(ctx, req.WorkspaceDir, repoGitEnv(), "git", "add", "committed-answer.txt"); err != nil {
+					return err
+				} else if exitCode != 0 {
+					return fmt.Errorf("git add committed-answer.txt: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
+				}
+				if _, stderr, exitCode, err := runCommand(ctx, req.WorkspaceDir, repoGitEnv(), "git", "commit", "-m", "trial answer"); err != nil {
+					return err
+				} else if exitCode != 0 {
+					return fmt.Errorf("git commit trial answer: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
+				}
+				return nil
+			},
+		}
+
+		suite, task := writeTempSuiteTask(t, repoRoot, "in-place-committed-change", map[string]string{
+			"input/instruction.txt": "Create committed-answer.txt with ready and commit it.\n",
+			"input/model-turns.json": `[
+  "{\"type\":\"done\",\"summary\":\"finished\"}"
+]`,
+			"task.json": `{
+  "id": "in-place-committed-change",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": ".",
+  "full_send": true,
+  "step_limit": 5,
+  "graders": {}
+}`,
+		})
+
+		artifacts, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider})
+		if err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if !strings.Contains(artifacts.GitNameStatus, "A\tcommitted-answer.txt") {
+			t.Fatalf("GitNameStatus = %q, want committed-answer.txt addition", artifacts.GitNameStatus)
+		}
+		if !strings.Contains(artifacts.GitDiff, "+ready") {
+			t.Fatalf("GitDiff = %q, want +ready", artifacts.GitDiff)
+		}
+		if got := gitRevParseForTest(t, repoRoot, "HEAD"); got != pretrialHead {
+			t.Fatalf("HEAD = %q, want pretrial HEAD %q", got, pretrialHead)
+		}
+		if _, err := os.Stat(filepath.Join(repoRoot, "committed-answer.txt")); !os.IsNotExist(err) {
+			t.Fatalf("committed-answer.txt exists after cleanup or stat failed: err=%v", err)
+		}
+		if gitRefExistsForTest(t, repoRoot, trialBaselineRef(artifacts.TrialID)) {
+			t.Fatalf("baseline ref %q still exists after cleanup", trialBaselineRef(artifacts.TrialID))
+		}
+	})
+
+	t.Run("materialized task workspace is isolated from suite fixtures", func(t *testing.T) {
+		ctx := context.Background()
+		repoRoot := newTempRepoRoot(t)
+		harness := newHarnessForTests(t, ctx, repoRoot)
+		fake := &fakeAdapter{
+			result: AdapterResult{
+				ExitCode:     0,
+				AgentVersion: "fake-1.0",
+				AgentCommand: []string{"fake-agent"},
+			},
+			mutate: func(req AdapterRequest) error {
+				if req.WorkspaceDir == repoRoot {
+					t.Fatalf("adapter workspace dir = repo root %q, want materialized trial workspace", repoRoot)
+				}
+				if _, err := os.Stat(filepath.Join(req.WorkspaceDir, "source.txt")); err != nil {
+					return fmt.Errorf("stat materialized source: %w", err)
+				}
+				return os.WriteFile(filepath.Join(req.WorkspaceDir, "answer.txt"), []byte("ready\n"), 0o644)
+			},
+		}
+		harness.adapter = fake
+
+		suite, task := writeTempSuiteTask(t, repoRoot, "materialized-workspace", map[string]string{
+			"input/instruction.txt": "Read source.txt, write answer.txt, then finish.\n",
+			"input/model-turns.json": `[
+  "{\"type\":\"done\",\"summary\":\"finished\"}"
+]`,
+			"input/project/AGENTS.md":  "Work only in the current directory.\n",
+			"input/project/source.txt": "ready\n",
+			"task.json": `{
+  "id": "materialized-workspace",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "input/project",
+  "full_send": true,
+  "step_limit": 5,
+  "graders": {
+    "outcome_command_output": {
+      "enabled": true,
+      "required": true,
+      "command": [
+        "cat",
+        "answer.txt"
+      ],
+      "stdout_contains": [
+        "ready"
+      ]
+    }
+  }
+}`,
+		})
+
+		artifacts, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider})
+		if err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if !fake.called {
+			t.Fatal("adapter was not called")
+		}
+		if artifacts.WorkspaceRoot != fake.req.WorkspaceDir {
+			t.Fatalf("WorkspaceRoot = %q, want adapter workspace %q", artifacts.WorkspaceRoot, fake.req.WorkspaceDir)
+		}
+		if !artifacts.TrialPassed {
+			t.Fatalf("trial_passed = false, want true; graders=%#v", artifacts.GraderResults)
+		}
+		fixtureAnswer := filepath.Join(repoRoot, "evaluations", "suites", suite.ID, "tasks", task.ID, "input", "project", "answer.txt")
+		if _, err := os.Stat(fixtureAnswer); !os.IsNotExist(err) {
+			t.Fatalf("fixture answer file exists or stat failed: err=%v", err)
+		}
+		if !strings.Contains(artifacts.GitNameStatus, "answer.txt") {
+			t.Fatalf("GitNameStatus = %q, want answer.txt", artifacts.GitNameStatus)
+		}
+	})
+
+	t.Run("materialized_committed_changes_are_captured", func(t *testing.T) {
+		ctx := context.Background()
+		repoRoot := newTempRepoRoot(t)
+		harness := newHarnessForTests(t, ctx, repoRoot)
+		fake := &fakeAdapter{
+			result: AdapterResult{
+				ExitCode:     0,
+				AgentVersion: "fake-1.0",
+				AgentCommand: []string{"fake-agent"},
+			},
+			mutate: func(req AdapterRequest) error {
+				if req.WorkspaceDir == repoRoot {
+					t.Fatalf("adapter workspace dir = repo root %q, want materialized trial workspace", repoRoot)
+				}
+				if err := os.WriteFile(filepath.Join(req.WorkspaceDir, "answer.txt"), []byte("ready\n"), 0o644); err != nil {
+					return err
+				}
+				if _, stderr, exitCode, err := runCommand(ctx, req.WorkspaceDir, repoGitEnv(), "git", "add", "answer.txt"); err != nil {
+					return err
+				} else if exitCode != 0 {
+					return fmt.Errorf("git add answer.txt: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
+				}
+				if _, stderr, exitCode, err := runCommand(ctx, req.WorkspaceDir, repoGitEnv(), "git", "commit", "-m", "trial answer"); err != nil {
+					return err
+				} else if exitCode != 0 {
+					return fmt.Errorf("git commit trial answer: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
+				}
+				return nil
+			},
+		}
+		harness.adapter = fake
+
+		suite, task := writeTempSuiteTask(t, repoRoot, "materialized-committed-change", map[string]string{
+			"input/instruction.txt": "Create answer.txt with ready and commit it.\n",
+			"input/model-turns.json": `[
+  "{\"type\":\"done\",\"summary\":\"finished\"}"
+]`,
+			"input/project/source.txt": "source\n",
+			"task.json": `{
+  "id": "materialized-committed-change",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "input/project",
+  "full_send": true,
+  "step_limit": 5,
+  "graders": {}
+}`,
+		})
+
+		artifacts, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider})
+		if err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if !fake.called {
+			t.Fatal("adapter was not called")
+		}
+		if fake.req.WorkspaceDir == repoRoot {
+			t.Fatalf("adapter workspace dir = repo root %q, want materialized trial workspace", repoRoot)
+		}
+		if !strings.Contains(artifacts.GitNameStatus, "A\tanswer.txt") {
+			t.Fatalf("GitNameStatus = %q, want answer.txt addition", artifacts.GitNameStatus)
+		}
+		if !strings.Contains(artifacts.GitDiff, "+ready") {
+			t.Fatalf("GitDiff = %q, want +ready", artifacts.GitDiff)
+		}
+		fixtureAnswer := filepath.Join(repoRoot, "evaluations", "suites", suite.ID, "tasks", task.ID, "input", "project", "answer.txt")
+		if _, err := os.Stat(fixtureAnswer); !os.IsNotExist(err) {
+			t.Fatalf("fixture answer file exists or stat failed: err=%v", err)
+		}
+	})
+
 	t.Run("ignores ambient GIT_INDEX_FILE during repo-root git operations", func(t *testing.T) {
 		ctx := context.Background()
 		roots := newHarnessTestRoots(t)
@@ -670,6 +881,59 @@ func TestRunTrial(t *testing.T) {
 		}
 	})
 
+	t.Run("cleanup removes ignored files", func(t *testing.T) {
+		ctx := context.Background()
+		roots := newHarnessTestRoots(t)
+		repoRoot := roots.repoRoot
+		appendGitExclude(t, repoRoot, "ignored.txt")
+		preserveRepoRootOverlayFiles(t, repoRoot, "ignored.txt")
+		if err := os.WriteFile(filepath.Join(repoRoot, "ignored.txt"), []byte("remove me\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile(ignored.txt): %v", err)
+		}
+
+		harness := newHarnessForTests(t, ctx, roots.repoRoot, roots.evalsDir)
+		harness.adapter = &fakeAdapter{
+			result: AdapterResult{
+				ExitCode:     0,
+				AgentVersion: "fake-1.0",
+				AgentCommand: []string{"fake-agent"},
+			},
+		}
+
+		suite, task := writeTempSuiteTask(t, roots, "cleanup-preserves-ignored-file", map[string]string{
+			"input/instruction.txt": "do nothing\n",
+			"input/model-turns.json": `[
+  "{\"type\":\"done\",\"summary\":\"finished\"}"
+]`,
+			"task.json": `{
+  "id": "cleanup-preserves-ignored-file",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": ".",
+  "full_send": true,
+  "step_limit": 5,
+  "graders": {}
+}`,
+		})
+
+		if _, err := harness.RunTrial(ctx, suite, task, RunConfig{Mode: ModeMockProvider}); err != nil {
+			t.Fatalf("RunTrial(): %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(repoRoot, "ignored.txt")); !os.IsNotExist(err) {
+			t.Fatalf("ignored.txt exists after cleanup or stat failed: err=%v", err)
+		}
+		statusOut, _, statusExit, statusErr := runCommand(ctx, repoRoot, repoGitEnv(), "git", "status", "--porcelain", "--untracked-files=all")
+		if statusErr != nil {
+			t.Fatalf("git status: %v", statusErr)
+		}
+		if statusExit != 0 {
+			t.Fatalf("git status exit = %d", statusExit)
+		}
+		if strings.TrimSpace(statusOut) != "" {
+			t.Fatalf("git status = %q, want clean", statusOut)
+		}
+	})
+
 	t.Run("cleanup removes nested git repos", func(t *testing.T) {
 		ctx := context.Background()
 		roots := newHarnessTestRoots(t)
@@ -787,8 +1051,8 @@ func TestRunTrial(t *testing.T) {
 		if !strings.Contains(err.Error(), "adapter failure") {
 			t.Fatalf("RunTrial() error = %v, want adapter failure", err)
 		}
-		if !strings.Contains(err.Error(), "git reset --hard HEAD") {
-			t.Fatalf("RunTrial() error = %v, want cleanup failure", err)
+		if !strings.Contains(err.Error(), "git reset --hard") || !strings.Contains(err.Error(), "refs/clankerval/trials/") {
+			t.Fatalf("RunTrial() error = %v, want cleanup failure against trial baseline ref", err)
 		}
 	})
 
@@ -2368,6 +2632,27 @@ func TestRunTrialUsesAdapterSeam(t *testing.T) {
 	})
 }
 
+func TestCopyTreePreservesExecutableMode(t *testing.T) {
+	src := t.TempDir()
+	dst := filepath.Join(t.TempDir(), "dst")
+	script := filepath.Join(src, "check.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile(%q): %v", script, err)
+	}
+
+	if err := copyTree(src, dst); err != nil {
+		t.Fatalf("copyTree(): %v", err)
+	}
+
+	info, err := os.Stat(filepath.Join(dst, "check.sh"))
+	if err != nil {
+		t.Fatalf("Stat copied script: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o755 {
+		t.Fatalf("copied mode = %o, want 755", got)
+	}
+}
+
 // recordingAdapter wraps a real AgentAdapter and records calls.
 type recordingAdapter struct {
 	delegate    AgentAdapter
@@ -2475,6 +2760,29 @@ func appendGitExclude(t *testing.T, repoRoot string, patterns ...string) {
 			t.Fatalf("Write exclude pattern %q: %v", pattern, err)
 		}
 	}
+}
+
+func gitRevParseForTest(t *testing.T, repoRoot, ref string) string {
+	t.Helper()
+
+	out, stderr, exitCode, err := runCommand(context.Background(), repoRoot, repoGitEnv(), "git", "rev-parse", ref)
+	if err != nil {
+		t.Fatalf("git rev-parse %s: %v", ref, err)
+	}
+	if exitCode != 0 {
+		t.Fatalf("git rev-parse %s: exit=%d stderr=%s", ref, exitCode, strings.TrimSpace(stderr))
+	}
+	return strings.TrimSpace(out)
+}
+
+func gitRefExistsForTest(t *testing.T, repoRoot, ref string) bool {
+	t.Helper()
+
+	_, _, exitCode, err := runCommand(context.Background(), repoRoot, repoGitEnv(), "git", "show-ref", "--verify", "--quiet", ref)
+	if err != nil {
+		t.Fatalf("git show-ref --verify --quiet %s: %v", ref, err)
+	}
+	return exitCode == 0
 }
 
 func preserveRepoRootOverlayFiles(t *testing.T, repoRoot string, relPaths ...string) {
