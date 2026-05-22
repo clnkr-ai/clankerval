@@ -62,10 +62,16 @@ evaluations/
 : Declares **id**, **description**, **mode**, optional **agent**, **trials_per_task**, **failure_policy**, and the ordered task list.
 
 **task.json**
-: Declares **instruction_file**, **working_directory**, **step_limit**, **full_send**, optional **seed_transcript_file**, optional **mode**, optional **agent**, optional **scripted_turns_file**, and grader configuration.
+: Declares **instruction_file**, **working_directory**, **step_limit**, **full_send**, optional **seed_transcript_file**, optional **setup_command**, optional **setup_timeout_seconds**, optional **mode**, optional **agent**, optional **scripted_turns_file**, and grader configuration.
 
 **scripted_turns_file**
 : Required only for **mock-provider** tasks.
+
+**setup_command**
+: Optional task command run in the trial workspace after the baseline ref is created and before the agent starts. The command is exec'd directly; use a shell explicitly when shell parsing is needed.
+
+**setup_timeout_seconds**
+: Optional setup timeout in seconds. Defaults to 120 when **setup_command** is present.
 
 **input/project/AGENTS.md**
 : Project-local prompt file staged into the workspace for **clnkr** tasks.
@@ -148,6 +154,33 @@ export ANTHROPIC_API_KEY=your-anthropic-key
 
 clankerval run --suite default --agent claude
 ```
+
+Run task setup before the agent starts:
+
+```json
+{
+  "id": "001-investigate",
+  "instruction_file": "input/instruction.txt",
+  "scripted_turns_file": "input/model-turns.json",
+  "working_directory": "input/project",
+  "full_send": true,
+  "step_limit": 10,
+  "setup_command": [
+    "bash",
+    "-c",
+    "git apply ../bug.patch && printf '%s\n' 'incident=checkout-failure' > incident.txt"
+  ],
+  "setup_timeout_seconds": 30,
+  "graders": {
+    "outcome_diff": {
+      "enabled": true,
+      "required": true
+    }
+  }
+}
+```
+
+If setup exits nonzero or times out, the trial fails before agent launch. The bundle includes **setup-command-output.txt** and a **setup_command** grader result with stdout, stderr, exit code, and timeout state.
 
 Run the checked-in manual Claude smoke suite:
 
