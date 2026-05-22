@@ -240,11 +240,14 @@ type commandResultEnvelope struct {
 	ExitCode int
 }
 
+const clnkuEventLogMaxLineBytes = 16 * 1024 * 1024
+
 func parseCommandLifecycleEvents(raw string) ([]commandStartEvent, []commandDoneEvent, error) {
 	starts := []commandStartEvent{}
 	dones := []commandDoneEvent{}
 
 	scanner := bufio.NewScanner(strings.NewReader(raw))
+	scanner.Buffer(make([]byte, 0, 64*1024), clnkuEventLogMaxLineBytes)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
