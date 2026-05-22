@@ -182,6 +182,16 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 	artifacts.Mode = mode
 	artifacts.Agent = EffectiveAgent(task.Agent, suite.Agent, cfg.Agent)
 	workspaceDir := h.repoRoot
+	inPlaceWorkspace := task.WorkingDirectory == "."
+	if !inPlaceWorkspace {
+		workspaceDir = filepath.Join(trialRoot, "workspace")
+		if err := copyTree(filepath.Join(taskRoot, task.WorkingDirectory), workspaceDir); err != nil {
+			return RunArtifacts{}, fmt.Errorf("materialize task workspace: %w", err)
+		}
+		if err := initMaterializedWorkspaceGit(ctx, workspaceDir); err != nil {
+			return RunArtifacts{}, fmt.Errorf("initialize task workspace git baseline: %w", err)
+		}
+	}
 
 	homeDir := filepath.Join(trialRoot, "home")
 	configDir := filepath.Join(trialRoot, "config")
@@ -197,22 +207,36 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 		return RunArtifacts{}, fmt.Errorf("copy config input: %w", err)
 	}
 
-	if err := h.preflightRepoRoot(ctx); err != nil {
-		return RunArtifacts{}, err
-	}
-	overlayState, err := captureRepoRootOverlayState(workspaceDir, "AGENTS.md", "CLAUDE.md")
-	if err != nil {
-		return RunArtifacts{}, err
-	}
 	cleanupCtx := context.Background()
 	if ctx != nil {
 		cleanupCtx = context.WithoutCancel(ctx)
 	}
+	baselineRef := trialBaselineRef(artifacts.TrialID)
+	var overlayState map[string]repoRootOverlayState
+	if inPlaceWorkspace {
+		if err := h.preflightRepoRoot(ctx); err != nil {
+			return RunArtifacts{}, err
+		}
+		overlayState, err = captureRepoRootOverlayState(workspaceDir, "AGENTS.md", "CLAUDE.md")
+		if err != nil {
+			return RunArtifacts{}, err
+		}
+	}
+	if err := createTrialBaselineRef(ctx, workspaceDir, baselineRef); err != nil {
+		return RunArtifacts{}, err
+	}
 	defer func() {
-		if cleanupErr := h.cleanupRepoRoot(cleanupCtx, workspaceDir, overlayState); cleanupErr != nil {
+		if cleanupErr := deleteTrialBaselineRef(cleanupCtx, workspaceDir, baselineRef); cleanupErr != nil {
 			err = errors.Join(err, cleanupErr)
 		}
 	}()
+	if inPlaceWorkspace {
+		defer func() {
+			if cleanupErr := h.cleanupRepoRoot(cleanupCtx, workspaceDir, baselineRef, overlayState); cleanupErr != nil {
+				err = errors.Join(err, cleanupErr)
+			}
+		}()
+	}
 
 	if artifacts.Agent == AgentClnku {
 		if err := h.ensureClnkuBinary(ctx); err != nil {
@@ -295,7 +319,7 @@ func (h *Harness) RunTrial(ctx context.Context, suite Suite, task Task, cfg RunC
 	if err := copyFile(gitIndexPath, tempIndexPath); err != nil {
 		return RunArtifacts{}, fmt.Errorf("copy git index: %w", err)
 	}
-	if err := captureGitDiffArtifacts(ctx, workspaceDir, tempIndexPath, &artifacts); err != nil {
+	if err := captureGitDiffArtifacts(ctx, workspaceDir, tempIndexPath, baselineRef, &artifacts); err != nil {
 		return RunArtifacts{}, err
 	}
 
@@ -508,17 +532,17 @@ func (h *Harness) preflightRepoRoot(ctx context.Context) error {
 	return nil
 }
 
-func (h *Harness) cleanupRepoRoot(ctx context.Context, repoRoot string, overlayState map[string]repoRootOverlayState) error {
-	if _, stderr, exitCode, err := runCommand(ctx, repoRoot, repoGitEnv(), "git", "reset", "--hard", "HEAD"); err != nil {
-		return fmt.Errorf("git reset --hard HEAD: %w", err)
+func (h *Harness) cleanupRepoRoot(ctx context.Context, repoRoot, baselineRef string, overlayState map[string]repoRootOverlayState) error {
+	if _, stderr, exitCode, err := runCommand(ctx, repoRoot, repoGitEnv(), "git", "reset", "--hard", baselineRef); err != nil {
+		return fmt.Errorf("git reset --hard %s: %w", baselineRef, err)
 	} else if exitCode != 0 {
-		return fmt.Errorf("git reset --hard HEAD: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
+		return fmt.Errorf("git reset --hard %s: exit=%d stderr=%s", baselineRef, exitCode, strings.TrimSpace(stderr))
 	}
 
-	if _, stderr, exitCode, err := runCommand(ctx, repoRoot, repoGitEnv(), "git", "clean", "-ffd"); err != nil {
-		return fmt.Errorf("git clean -ffd: %w", err)
+	if _, stderr, exitCode, err := runCommand(ctx, repoRoot, repoGitEnv(), "git", "clean", "-ffdx"); err != nil {
+		return fmt.Errorf("git clean -ffdx: %w", err)
 	} else if exitCode != 0 {
-		return fmt.Errorf("git clean -ffd: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
+		return fmt.Errorf("git clean -ffdx: exit=%d stderr=%s", exitCode, strings.TrimSpace(stderr))
 	}
 
 	if err := restoreRepoRootOverlayState(repoRoot, overlayState, "AGENTS.md", "CLAUDE.md"); err != nil {
@@ -537,12 +561,12 @@ func (h *Harness) cleanupRepoRoot(ctx context.Context, repoRoot string, overlayS
 	return nil
 }
 
-func captureGitDiffArtifacts(ctx context.Context, repoRoot, gitIndexPath string, artifacts *RunArtifacts) error {
+func captureGitDiffArtifacts(ctx context.Context, repoRoot, gitIndexPath, baselineRef string, artifacts *RunArtifacts) error {
 	env := repoGitEnv("GIT_INDEX_FILE=" + gitIndexPath)
 	if err := intentUntrackedPathsForDiff(ctx, repoRoot, env); err != nil {
 		return err
 	}
-	diffOut, _, diffExit, diffErr := runCommand(ctx, repoRoot, env, "git", "diff", "--binary", "--no-renames", "HEAD")
+	diffOut, _, diffExit, diffErr := runCommand(ctx, repoRoot, env, "git", "diff", "--binary", "--no-renames", baselineRef)
 	if diffErr != nil {
 		return fmt.Errorf("capture git diff: %w", diffErr)
 	}
@@ -551,7 +575,7 @@ func captureGitDiffArtifacts(ctx context.Context, repoRoot, gitIndexPath string,
 	}
 	artifacts.GitDiff = diffOut
 
-	nameStatusOut, _, nameStatusExit, nameStatusErr := runCommand(ctx, repoRoot, env, "git", "diff", "--no-renames", "--name-status", "HEAD")
+	nameStatusOut, _, nameStatusExit, nameStatusErr := runCommand(ctx, repoRoot, env, "git", "diff", "--no-renames", "--name-status", baselineRef)
 	if nameStatusErr != nil {
 		return fmt.Errorf("capture git name-status: %w", nameStatusErr)
 	}
@@ -560,7 +584,7 @@ func captureGitDiffArtifacts(ctx context.Context, repoRoot, gitIndexPath string,
 	}
 	artifacts.GitNameStatus = nameStatusOut
 
-	numstatOut, _, numstatExit, numstatErr := runCommand(ctx, repoRoot, env, "git", "diff", "--no-renames", "--numstat", "HEAD")
+	numstatOut, _, numstatExit, numstatErr := runCommand(ctx, repoRoot, env, "git", "diff", "--no-renames", "--numstat", baselineRef)
 	if numstatErr != nil {
 		return fmt.Errorf("capture git numstat: %w", numstatErr)
 	}
@@ -846,6 +870,28 @@ func repoGitIndexPath(ctx context.Context, repoRoot string) (string, error) {
 	return filepath.Join(gitDir, "index"), nil
 }
 
+func trialBaselineRef(trialID string) string {
+	return fmt.Sprintf("refs/clankerval/trials/%s/baseline", trialID)
+}
+
+func createTrialBaselineRef(ctx context.Context, repoRoot, ref string) error {
+	if _, stderr, exitCode, err := runCommand(ctx, repoRoot, repoGitEnv(), "git", "update-ref", ref, "HEAD"); err != nil {
+		return fmt.Errorf("create trial baseline ref %s: %w", ref, err)
+	} else if exitCode != 0 {
+		return fmt.Errorf("create trial baseline ref %s: exit=%d stderr=%s", ref, exitCode, strings.TrimSpace(stderr))
+	}
+	return nil
+}
+
+func deleteTrialBaselineRef(ctx context.Context, repoRoot, ref string) error {
+	if _, stderr, exitCode, err := runCommand(ctx, repoRoot, repoGitEnv(), "git", "update-ref", "-d", ref); err != nil {
+		return fmt.Errorf("delete trial baseline ref %s: %w", ref, err)
+	} else if exitCode != 0 {
+		return fmt.Errorf("delete trial baseline ref %s: exit=%d stderr=%s", ref, exitCode, strings.TrimSpace(stderr))
+	}
+	return nil
+}
+
 func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
@@ -934,6 +980,10 @@ func copyTree(src, dst string) error {
 		if d.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
@@ -941,9 +991,27 @@ func copyTree(src, dst string) error {
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
-		return os.WriteFile(target, data, 0o644)
+		return os.WriteFile(target, data, info.Mode().Perm())
 	}); err != nil {
 		return fmt.Errorf("copy tree %q -> %q: %w", src, dst, err)
+	}
+	return nil
+}
+
+func initMaterializedWorkspaceGit(ctx context.Context, workspaceDir string) error {
+	steps := [][]string{
+		{"init"},
+		{"config", "user.name", "clankerval"},
+		{"config", "user.email", "clankerval@example.invalid"},
+		{"add", "."},
+		{"commit", "--allow-empty", "-m", "baseline"},
+	}
+	for _, args := range steps {
+		if _, stderr, exitCode, err := runCommand(ctx, workspaceDir, repoGitEnv(), "git", args...); err != nil {
+			return fmt.Errorf("git %s: %w", strings.Join(args, " "), err)
+		} else if exitCode != 0 {
+			return fmt.Errorf("git %s: exit=%d stderr=%s", strings.Join(args, " "), exitCode, strings.TrimSpace(stderr))
+		}
 	}
 	return nil
 }

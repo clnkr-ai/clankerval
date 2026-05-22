@@ -240,11 +240,13 @@ func validateTaskJSON(path string, raw taskJSON) (Task, error) {
 	if err != nil {
 		return Task{}, err
 	}
-	if workingDirectory != "." {
-		return Task{}, fmt.Errorf("%s: field %q must be %q, got %q", path, "working_directory", ".", workingDirectory)
-	}
 	if err := validateTaskRelativePath(taskRoot, path, "working_directory", workingDirectory, true); err != nil {
 		return Task{}, err
+	}
+	if info, err := os.Stat(filepath.Join(taskRoot, workingDirectory)); err != nil {
+		return Task{}, fmt.Errorf("%s: field %q path %q: %w", path, "working_directory", workingDirectory, err)
+	} else if !info.IsDir() {
+		return Task{}, fmt.Errorf("%s: field %q path %q must be a directory", path, "working_directory", workingDirectory)
 	}
 	stepLimit, err := requiredPositiveInt(path, "step_limit", raw.StepLimit)
 	if err != nil {

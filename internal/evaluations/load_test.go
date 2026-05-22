@@ -558,11 +558,11 @@ func TestLoadTask(t *testing.T) {
 				wantErrPart:        `"seed_transcript_file"`,
 			},
 			{
-				name:              "working directory must be dot",
+				name:              "working directory escapes task root",
 				instructionFile:   "input/instruction.txt",
 				scriptedTurnsFile: "input/model-turns.json",
-				workingDirectory:  "workspace",
-				wantErrPart:       `must be "."`,
+				workingDirectory:  "../workspace",
+				wantErrPart:       `"working_directory"`,
 			},
 			{
 				name:              "absolute instruction file rejected",
@@ -605,12 +605,6 @@ func TestLoadTask(t *testing.T) {
 				_, err := LoadTask(filepath.Join(dir, "task.json"))
 				if err == nil {
 					t.Fatal("LoadTask() error = nil, want validation failure")
-				}
-				if tt.wantErrPart == `must be "."` {
-					if !strings.Contains(err.Error(), "working_directory") || !strings.Contains(err.Error(), tt.wantErrPart) {
-						t.Fatalf("error = %v, want working_directory validation for %s", err, tt.wantErrPart)
-					}
-					return
 				}
 				if !strings.Contains(err.Error(), tt.wantErrPart) || !strings.Contains(err.Error(), "must stay within task root") {
 					t.Fatalf("error = %v, want task-root validation for %s", err, tt.wantErrPart)
