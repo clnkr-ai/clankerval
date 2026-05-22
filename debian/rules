@@ -5,13 +5,15 @@ include /usr/share/dpkg/pkg-info.mk
 export CGO_ENABLED=0
 
 VERSION := $(DEB_VERSION_UPSTREAM)
+BUILD_DIR := $(abspath $(CURDIR)/../clankerval-debian-build)
 
 %:
 	dh $@
 
 override_dh_auto_build:
-	go build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o clankerval ./cmd/clankerval
-	go build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o evalfixture-agent ./internal/testfixture/evalfixture-agent
+	mkdir -p "$(BUILD_DIR)"
+	go build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o "$(BUILD_DIR)/clankerval" ./cmd/clankerval
+	go build -trimpath -ldflags '-s -w -X main.version=$(VERSION)' -o "$(BUILD_DIR)/evalfixture-agent" ./internal/testfixture/evalfixture-agent
 
 override_dh_auto_test:
 	go test ./... -v
@@ -28,17 +30,21 @@ override_dh_auto_test:
 		git config user.email debian-build@example.com && \
 		git add testdata/evaluations/fixtures/dummy/001-basic/note.txt && \
 		git commit -q -m base && \
-		"$(CURDIR)/clankerval" run --suite dummy \
+		"$(BUILD_DIR)/clankerval" run --suite dummy \
 			--evals-dir "$(CURDIR)/testdata/evaluations" \
-			--binary "$(CURDIR)/evalfixture-agent" \
+			--binary "$(BUILD_DIR)/evalfixture-agent" \
 			--output-dir "$$tmp_repo/out" \
 	)
 
 override_dh_auto_install:
 	:
 
+execute_before_dh_install:
+	install -D -m 0755 "$(BUILD_DIR)/clankerval" "debian/clankerval/usr/bin/clankerval"
+	install -D -m 0755 "$(BUILD_DIR)/evalfixture-agent" "debian/clankerval/usr/libexec/clankerval/examples/evalfixture-agent"
+
 override_dh_auto_clean:
-	rm -f clankerval evalfixture-agent
+	rm -rf "$(BUILD_DIR)"
 	rm -rf .tmp
 
 override_dh_dwz:

@@ -1,3 +1,1 @@
-clankerval usr/bin
-evalfixture-agent usr/libexec/clankerval/examples
 testdata/evaluations usr/share/doc/clankerval/examples
